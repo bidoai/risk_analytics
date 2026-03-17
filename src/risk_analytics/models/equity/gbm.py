@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.optimize import minimize_scalar
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class GeometricBrownianMotion(StochasticModel):
@@ -90,6 +94,7 @@ class GeometricBrownianMotion(StochasticModel):
             self.sigma = float(market_data["atm_vol"])
         if "mu" in market_data:
             self.mu = float(market_data["mu"])
+        logger.info("GBM calibrated: S0=%.4g  mu=%.4f  sigma=%.4f", self.S0, self.mu, self.sigma)
 
     def get_params(self) -> dict:
         return {"S0": self.S0, "mu": self.mu, "sigma": self.sigma}

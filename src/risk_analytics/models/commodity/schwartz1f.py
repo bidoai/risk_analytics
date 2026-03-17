@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.optimize import minimize
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class Schwartz1F(StochasticModel):
@@ -115,6 +119,11 @@ class Schwartz1F(StochasticModel):
             fwd = np.asarray(market_data["forward_prices"])
             tenors = np.asarray(market_data["forward_tenors"])
             self._fit_to_forward_curve(fwd, tenors)
+
+        logger.info(
+            "Schwartz1F calibrated: S0=%.4g  kappa=%.4f  mu=%.4f  sigma=%.4f",
+            self.S0, self.kappa, self.mu, self.sigma,
+        )
 
     def get_params(self) -> dict:
         return {"S0": self.S0, "kappa": self.kappa, "mu": self.mu, "sigma": self.sigma}

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.optimize import minimize
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class HestonModel(StochasticModel):
@@ -132,6 +136,7 @@ class HestonModel(StochasticModel):
             self.mu = float(market_data["r"])
 
         if "implied_vols" not in market_data:
+            logger.info("Heston calibrated (no vol surface): S0=%.4g  mu=%.4f", self.S0, self.mu)
             return
 
         strikes = np.asarray(market_data["strikes"])
@@ -150,8 +155,18 @@ class HestonModel(StochasticModel):
 
         x0 = [self.kappa, self.theta, self.xi, self.rho, self.v0]
         bounds = [(0.01, 20), (1e-4, 2), (1e-4, 5), (-0.99, 0.99), (1e-4, 2)]
+        logger.info(
+            "Heston: calibrating to vol surface (%d strikes × %d maturities)",
+            len(strikes), len(maturities),
+        )
         result = minimize(objective, x0=x0, bounds=bounds, method="L-BFGS-B")
         self.kappa, self.theta, self.xi, self.rho, self.v0 = result.x
+        logger.info(
+            "Heston calibrated: kappa=%.4f  theta=%.4f  xi=%.4f  rho=%.4f  v0=%.4f  "
+            "converged=%s  obj=%.6g",
+            self.kappa, self.theta, self.xi, self.rho, self.v0,
+            result.success, result.fun,
+        )
 
     def get_params(self) -> dict:
         return {

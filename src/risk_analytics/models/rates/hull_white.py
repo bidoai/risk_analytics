@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.optimize import minimize
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class HullWhite1F(StochasticModel):
@@ -130,16 +134,27 @@ class HullWhite1F(StochasticModel):
         time_grid = np.asarray(market_data["time_grid"])
 
         self.r0 = float(np.interp(0.0, tenors, zero_rates)) if tenors[0] > 0 else zero_rates[0]
+        logger.info("HullWhite1F: fitting theta to zero curve (%d tenors), r0=%.4f", len(tenors), self.r0)
 
         # Fit theta(t) to match the initial zero curve (exact fit)
         self.theta = self._fit_theta(time_grid, tenors, zero_rates)
+        logger.debug("HullWhite1F: theta fitted, shape=%s", self.theta.shape)
 
         # Optionally fit a and sigma to cap vols
         if "cap_vols" in market_data and "cap_tenors" in market_data:
+            logger.info("HullWhite1F: calibrating a and sigma to cap vols")
             self._calibrate_vol_params(market_data)
 
+        logger.info(
+            "HullWhite1F calibrated: r0=%.4f  a=%.4f  sigma=%.4f",
+            self.r0, self.a, self.sigma,
+        )
+
     def get_params(self) -> dict:
-        return {"a": self.a, "sigma": self.sigma, "r0": self.r0}
+        params: dict = {"a": self.a, "sigma": self.sigma, "r0": self.r0}
+        if self.theta is not None:
+            params["theta"] = self.theta  # np.ndarray — serialised as list by save()
+        return params
 
     def set_params(self, params: dict) -> None:
         if "a" in params:

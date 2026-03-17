@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.stats import qmc
 
 from .base import StochasticModel
 from .paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class MonteCarloEngine:
@@ -69,10 +73,18 @@ class MonteCarloEngine:
         """
         n_steps = len(time_grid) - 1
         total_factors = sum(m.n_factors for m in models)
+        model_names = [m.name for m in models]
+
+        logger.info(
+            "MonteCarloEngine.run: n_paths=%d  n_steps=%d  models=%s  "
+            "antithetic=%s  quasi_random=%s",
+            self.n_paths, n_steps, model_names, self.antithetic, self.quasi_random,
+        )
 
         # --- Generate raw standard normals ---
         # Shape: (n_paths, n_steps, total_factors)
         draws = self._generate_draws(n_paths=self.n_paths, n_steps=n_steps, total_factors=total_factors)
+        logger.debug("Random draws generated: shape=%s", draws.shape)
 
         # --- Apply Cholesky correlation ---
         if correlation_matrix is not None:
@@ -81,6 +93,7 @@ class MonteCarloEngine:
             L = np.linalg.cholesky(corr)
             # draws @ L.T applies correlation; shape preserved
             draws = draws @ L.T
+            logger.debug("Cholesky correlation applied: corr_matrix shape=%s", corr.shape)
 
         # --- Slice draws per model and simulate ---
         results: dict[str, SimulationResult] = {}
@@ -88,9 +101,11 @@ class MonteCarloEngine:
         for model in models:
             nf = model.n_factors
             model_draws = draws[:, :, offset : offset + nf]
+            logger.debug("Simulating %s (factors=%d, draw_slice=[%d:%d])", model.name, nf, offset, offset + nf)
             results[model.name] = model.simulate(time_grid, self.n_paths, model_draws)
             offset += nf
 
+        logger.info("MonteCarloEngine.run complete: %d models simulated", len(results))
         return results
 
     # ------------------------------------------------------------------

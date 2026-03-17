@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 from scipy.optimize import minimize_scalar
 from scipy.stats import norm
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+
+logger = logging.getLogger(__name__)
 
 
 class GarmanKohlhagen(StochasticModel):
@@ -109,6 +113,11 @@ class GarmanKohlhagen(StochasticModel):
             self.sigma = float(market_data["atm_vol"])
         elif all(k in market_data for k in ("option_price", "strike", "maturity")):
             self._fit_sigma(market_data)
+
+        logger.info(
+            "GarmanKohlhagen calibrated: S0=%.4g  r_d=%.4f  r_f=%.4f  sigma=%.4f",
+            self.S0, self.r_d, self.r_f, self.sigma,
+        )
 
     def get_params(self) -> dict:
         return {"S0": self.S0, "r_d": self.r_d, "r_f": self.r_f, "sigma": self.sigma}

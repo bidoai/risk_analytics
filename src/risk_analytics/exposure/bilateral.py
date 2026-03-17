@@ -10,9 +10,12 @@ Key references:
 """
 from __future__ import annotations
 
+import logging
 import warnings
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 from risk_analytics.core.paths import SimulationResult
 from .csa import CSATerms
@@ -387,12 +390,22 @@ class ISDAExposureCalculator:
             cva, dva, bcva   : float (if hazard rates given)
             collateral       : CollateralAccount
         """
+        logger.info(
+            "ISDAExposureCalculator.run: netting_set=%s  n_steps=%d  confidence=%.2f",
+            self.netting_set.name, len(time_grid) - 1, confidence,
+        )
+
         # 1. Net MTM
         net_mtm = self.netting_set.net_mtm(simulation_results)  # (n_paths, T)
+        logger.debug("Step 1 complete: net_mtm shape=%s", net_mtm.shape)
 
         # 2. VM: path-dependent CSB (MTA-gated) and MPOR-lagged version for exposure
         csb = self.vm_engine.path_csb(net_mtm, time_grid)          # (n_paths, T)
         lagged_csb = self.vm_engine.lagged_csb(net_mtm, time_grid)  # (n_paths, T)
+        logger.debug(
+            "Step 2 complete: VM CSB mean=%.2f  lagged_CSB mean=%.2f",
+            float(csb.mean()), float(lagged_csb.mean()),
+        )
 
         # 3. IM
         im: np.ndarray | None = None
@@ -404,8 +417,12 @@ class ISDAExposureCalculator:
                     sensitivities=im_sensitivities,
                     shape=shape,
                 )
+                logger.debug("Step 3 complete: IM computed, mean=%.2f", float(im.mean()))
             except ValueError:
                 warnings.warn("IM computation skipped: missing inputs.", UserWarning, stacklevel=2)
+                logger.warning("IM computation skipped: missing im_trades or im_sensitivities")
+        else:
+            logger.debug("Step 3 skipped: no IM engine configured")
 
         # 4. Reconcile collateral account
         self.collateral.reset()
@@ -440,5 +457,9 @@ class ISDAExposureCalculator:
                 "netting_set": self.netting_set.name,
                 "csa": self.csa,
             }
+        )
+        logger.info(
+            "ISDAExposureCalculator.run complete: EPE=%.2f  PSE=%.2f  EEPE=%.2f",
+            float(summary["epe"]), float(summary["pse"]), float(summary["eepe"]),
         )
         return summary
