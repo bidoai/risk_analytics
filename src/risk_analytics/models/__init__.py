@@ -3,6 +3,7 @@ from .equity.gbm import GeometricBrownianMotion
 from .equity.heston import HestonModel
 from .commodity.schwartz1f import Schwartz1F
 from .commodity.schwartz2f import Schwartz2F
+from .fx.garman_kohlhagen import GarmanKohlhagen
 
 __all__ = [
     "HullWhite1F",
@@ -10,4 +11,5 @@ __all__ = [
     "HestonModel",
     "Schwartz1F",
     "Schwartz2F",
+    "GarmanKohlhagen",
 ]

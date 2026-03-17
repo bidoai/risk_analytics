@@ -5,6 +5,7 @@ import pytest
 from risk_analytics.core import MonteCarloEngine, TimeGrid
 from risk_analytics.models import (
     GeometricBrownianMotion,
+    GarmanKohlhagen,
     HestonModel,
     HullWhite1F,
     Schwartz1F,
@@ -188,6 +189,71 @@ class TestSchwartz2F:
         results = engine.run([self.model], self.grid)
         S = results["Schwartz2F"].factor("S")
         assert np.all(S > 0)
+
+
+# -----------------------------------------------------------------------
+# Garman-Kohlhagen FX model
+# -----------------------------------------------------------------------
+
+class TestGarmanKohlhagen:
+    def setup_method(self):
+        self.model = GarmanKohlhagen(S0=1.10, r_d=0.03, r_f=0.01, sigma=0.10)
+        self.grid = TimeGrid.uniform(1.0, 252)
+
+    def test_simulate_shape(self):
+        engine = MonteCarloEngine(N_PATHS, seed=SEED)
+        results = engine.run([self.model], self.grid)
+        assert results["GarmanKohlhagen"].paths.shape == (N_PATHS, 253, 1)
+        assert results["GarmanKohlhagen"].factor_names == ["S"]
+
+    def test_initial_spot(self):
+        engine = MonteCarloEngine(N_PATHS, seed=SEED)
+        results = engine.run([self.model], self.grid)
+        S0_sim = results["GarmanKohlhagen"].paths[:, 0, 0]
+        assert np.allclose(S0_sim, 1.10)
+
+    def test_positive_paths(self):
+        engine = MonteCarloEngine(N_PATHS, seed=SEED)
+        results = engine.run([self.model], self.grid)
+        assert np.all(results["GarmanKohlhagen"].paths > 0)
+
+    def test_risk_neutral_forward(self):
+        """E[S(T)] should equal the GK forward S0·exp((r_d - r_f)·T)."""
+        engine = MonteCarloEngine(20000, seed=SEED)
+        grid = TimeGrid.uniform(1.0, 12)
+        results = engine.run([self.model], grid)
+        S_terminal = results["GarmanKohlhagen"].factor("S")[:, -1]
+        expected = self.model.forward(1.0)
+        assert abs(S_terminal.mean() / expected - 1.0) < 0.02
+
+    def test_gk_price_call_put_parity(self):
+        """Call - Put = S·e^{-r_f·T} - K·e^{-r_d·T} (Garman-Kohlhagen parity)."""
+        S, K, T = 1.10, 1.05, 1.0
+        r_d, r_f, sigma = 0.03, 0.01, 0.10
+        call = GarmanKohlhagen.gk_price(S, K, T, r_d, r_f, sigma, "call")
+        put  = GarmanKohlhagen.gk_price(S, K, T, r_d, r_f, sigma, "put")
+        parity = S * np.exp(-r_f * T) - K * np.exp(-r_d * T)
+        assert abs((call - put) - parity) < 1e-10
+
+    def test_calibrate_atm_vol(self):
+        self.model.calibrate({"atm_vol": 0.15})
+        assert self.model.sigma == 0.15
+
+    def test_calibrate_from_option_price(self):
+        """Round-trip: price a call, then recover sigma from that price."""
+        target_sigma = 0.12
+        price = GarmanKohlhagen.gk_price(1.10, 1.10, 1.0, 0.03, 0.01, target_sigma, "call")
+        self.model.calibrate({
+            "option_price": price, "strike": 1.10,
+            "maturity": 1.0, "option_type": "call",
+        })
+        assert abs(self.model.sigma - target_sigma) < 1e-5
+
+    def test_get_set_params(self):
+        self.model.set_params({"sigma": 0.20, "r_d": 0.05})
+        p = self.model.get_params()
+        assert p["sigma"] == 0.20
+        assert p["r_d"] == 0.05
 
 
 # -----------------------------------------------------------------------
