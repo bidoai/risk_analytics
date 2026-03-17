@@ -1,4 +1,5 @@
 from .base import Pricer, StochasticModel
+from .yield_curve import Interpolation, YieldCurve
 from .conventions import (
     BusinessDayConvention,
     Calendar,
@@ -26,4 +27,6 @@ __all__ = [
     "USCalendar",
     "Frequency",
     "Schedule",
+    "YieldCurve",
+    "Interpolation",
 ]

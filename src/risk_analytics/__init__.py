@@ -1,7 +1,7 @@
 """risk_analytics — Monte Carlo simulation and exposure analytics library."""
 
 from .backtest import BacktestEngine, BacktestResult
-from .core import MonteCarloEngine, Pricer, SimulationResult, StochasticModel, TimeGrid
+from .core import MonteCarloEngine, Pricer, SimulationResult, StochasticModel, TimeGrid, YieldCurve, Interpolation
 from .models import GeometricBrownianMotion, HestonModel, HullWhite1F, Schwartz1F, Schwartz2F
 from .pricing import EuropeanOption, FixedRateBond, InterestRateSwap, ZeroCouponBond
 from .exposure import (
@@ -25,6 +25,8 @@ __all__ = [
     "BacktestEngine",
     "BacktestResult",
     # Core
+    "YieldCurve",
+    "Interpolation",
     "StochasticModel",
     "Pricer",
     "SimulationResult",

@@ -7,6 +7,7 @@ from scipy.optimize import minimize
 
 from risk_analytics.core.base import StochasticModel
 from risk_analytics.core.paths import SimulationResult
+from risk_analytics.core.yield_curve import YieldCurve
 
 logger = logging.getLogger(__name__)
 
@@ -124,20 +125,30 @@ class HullWhite1F(StochasticModel):
         """Calibrate Hull-White parameters to market data.
 
         Expected market_data keys:
-        - 'zero_rates': np.ndarray of spot zero rates at 'tenors'
-        - 'tenors': np.ndarray of tenors in years
-        - 'time_grid': np.ndarray — simulation time grid (sets theta)
+        - 'time_grid': np.ndarray — simulation time grid (required)
+        - 'yield_curve': YieldCurve — preferred; provides interpolated rates
+          and instantaneous forwards directly.
+        - 'tenors' + 'zero_rates': np.ndarray pair — legacy interface;
+          a LOG_LINEAR YieldCurve is constructed automatically.
         - 'cap_vols' (optional): np.ndarray of cap implied vols for (a, sigma) calibration
         """
-        tenors = np.asarray(market_data["tenors"])
-        zero_rates = np.asarray(market_data["zero_rates"])
         time_grid = np.asarray(market_data["time_grid"])
 
-        self.r0 = float(np.interp(0.0, tenors, zero_rates)) if tenors[0] > 0 else zero_rates[0]
-        logger.info("HullWhite1F: fitting theta to zero curve (%d tenors), r0=%.4f", len(tenors), self.r0)
+        if "yield_curve" in market_data:
+            curve = market_data["yield_curve"]
+        else:
+            tenors = np.asarray(market_data["tenors"])
+            zero_rates = np.asarray(market_data["zero_rates"])
+            curve = YieldCurve(tenors, zero_rates)
 
-        # Fit theta(t) to match the initial zero curve (exact fit)
-        self.theta = self._fit_theta(time_grid, tenors, zero_rates)
+        self.r0 = float(curve.zero_rate(0.0))
+        logger.info(
+            "HullWhite1F: fitting theta to yield curve (%s, %d tenors), r0=%.4f",
+            curve.interpolation.value, len(curve._t), self.r0,
+        )
+
+        # Fit theta(t) to match the initial term structure exactly
+        self.theta = self._fit_theta(time_grid, curve)
         logger.debug("HullWhite1F: theta fitted, shape=%s", self.theta.shape)
 
         # Optionally fit a and sigma to cap vols
@@ -188,27 +199,30 @@ class HullWhite1F(StochasticModel):
     # Private
     # ------------------------------------------------------------------
 
-    def _fit_theta(
-        self, time_grid: np.ndarray, tenors: np.ndarray, zero_rates: np.ndarray
-    ) -> np.ndarray:
+    def _fit_theta(self, time_grid: np.ndarray, curve: YieldCurve) -> np.ndarray:
         """Derive theta(t) that fits the initial term structure.
 
         For Hull-White: θ(t) = f'(0,t) + a·f(0,t) + σ²/(2a)·(1 - exp(-2a·t))
-        where f(0,t) is the instantaneous forward rate.
+        where f(0,t) is the instantaneous forward rate from the yield curve.
+
+        Using YieldCurve.instantaneous_forward() gives analytically correct
+        forwards for each interpolation method (piecewise-constant for
+        LOG_LINEAR; smooth for CUBIC_SPLINE) rather than finite-differencing
+        interpolated zero rates.
         """
-        # Interpolate continuous zero rates onto time grid
-        zr = np.interp(time_grid, tenors, zero_rates)
-        # Instantaneous forward rate: f(0,t) ≈ d(t·z(t))/dt
-        tz = time_grid * zr
-        dt = np.diff(time_grid)
-        # Forward rates at mid-points (finite difference)
-        fwd = np.diff(tz) / dt
-        # Forward rate derivative (central difference extended)
-        dfwd = np.gradient(fwd, time_grid[:-1]) if len(fwd) > 1 else np.zeros_like(fwd)
+        t_mid = time_grid[:-1]   # (T-1,) — one value per simulation step
+
+        # Instantaneous forwards from the curve (analytic, not finite-diff)
+        fwd = curve.instantaneous_forward(t_mid)
+
+        # f'(0,t): numerical gradient of f along the time grid mid-points
+        dfwd = np.gradient(fwd, t_mid) if len(fwd) > 1 else np.zeros_like(fwd)
 
         a, sigma = self.a, self.sigma
-        t_mid = time_grid[:-1]
-        theta = dfwd + a * fwd + (sigma**2 / (2 * a)) * (1 - np.exp(-2 * a * t_mid)) if a != 0 else dfwd + sigma**2 * t_mid
+        if a != 0:
+            theta = dfwd + a * fwd + (sigma**2 / (2.0 * a)) * (1.0 - np.exp(-2.0 * a * t_mid))
+        else:
+            theta = dfwd + sigma**2 * t_mid
         return theta
 
     def _calibrate_vol_params(self, market_data: dict) -> None:
