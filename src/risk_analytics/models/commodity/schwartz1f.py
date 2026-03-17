@@ -66,18 +66,26 @@ class Schwartz1F(StochasticModel):
         SimulationResult with factor 'S', shape (n_paths, T, 1)
         """
         T = len(time_grid)
-        dt = np.diff(time_grid)
+        dt = np.diff(time_grid)  # (T-1,)
+        kappa, mu, sigma = self.kappa, self.mu, self.sigma
+
+        Z = random_draws[:, :, 0]  # (n_paths, T-1)
+
+        # Precompute all per-step coefficients as (T-1,) arrays
+        if kappa != 0.0:
+            e_kdt = np.exp(-kappa * dt)
+            mu_contrib = mu * (1.0 - e_kdt)
+            std_step = sigma * np.sqrt(-np.expm1(-2.0 * kappa * dt) / (2.0 * kappa))
+        else:
+            e_kdt = np.ones(T - 1)
+            mu_contrib = np.zeros(T - 1)
+            std_step = sigma * np.sqrt(dt)
 
         X = np.empty((n_paths, T))
         X[:, 0] = np.log(self.S0)
 
-        dW = random_draws[:, :, 0]  # (n_paths, T-1)
-
         for i in range(T - 1):
-            e = np.exp(-self.kappa * dt[i])
-            cond_mean = X[:, i] * e + self.mu * (1 - e)
-            cond_std = self.sigma * np.sqrt((1 - e**2) / (2 * self.kappa)) if self.kappa != 0 else self.sigma * np.sqrt(dt[i])
-            X[:, i + 1] = cond_mean + cond_std * dW[:, i]
+            X[:, i + 1] = X[:, i] * e_kdt[i] + mu_contrib[i] + std_step[i] * Z[:, i]
 
         paths = np.exp(X)[:, :, np.newaxis]
 

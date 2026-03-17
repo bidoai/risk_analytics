@@ -51,6 +51,10 @@ class EuropeanOption(Pricer):
     def price(self, result: SimulationResult) -> np.ndarray:
         """MTM via Black-Scholes before expiry; intrinsic value at expiry.
 
+        Fully vectorised: no Python loop over time steps. Boolean index
+        slices select the live, at-expiry, and expired columns and price
+        them in one NumPy call each.
+
         Parameters
         ----------
         result : SimulationResult
@@ -60,25 +64,43 @@ class EuropeanOption(Pricer):
         -------
         np.ndarray, shape (n_paths, T)
         """
-        S = result.factor("S")  # (n_paths, T)
+        S = result.factor("S")   # (n_paths, T)
         time_grid = result.time_grid
-        n_paths, n_steps = S.shape
-        mtm = np.zeros((n_paths, n_steps))
+        tau = self.expiry - time_grid  # (T,) — positive before expiry
 
-        for i, t in enumerate(time_grid):
-            tau = self.expiry - t
-            S_t = S[:, i]
+        live = tau > 0                          # columns before expiry
+        at_exp = np.isclose(time_grid, self.expiry)  # column(s) at expiry
+        # expired columns (tau < 0 and not at_exp) stay zero
 
-            if tau <= 0:
-                # At or past expiry: intrinsic payoff (already paid if past)
-                if t == self.expiry or np.isclose(t, self.expiry):
-                    if self.option_type == "call":
-                        mtm[:, i] = self.notional * np.maximum(S_t - self.strike, 0.0)
-                    else:
-                        mtm[:, i] = self.notional * np.maximum(self.strike - S_t, 0.0)
-                # After expiry: option has expired, MTM = 0
+        mtm = np.zeros_like(S)
+
+        # --- Before expiry: Black-Scholes on all live columns at once ---
+        if np.any(live):
+            tau_live = tau[live]              # (n_live,)
+            S_live = S[:, live]              # (n_paths, n_live)
+            sqrt_tau = np.sqrt(tau_live)
+
+            K, r, sig = self.strike, self.risk_free_rate, self.sigma
+            with np.errstate(divide="ignore", invalid="ignore"):
+                d1 = (np.log(S_live / K) + (r + 0.5 * sig**2) * tau_live) / (sig * sqrt_tau)
+            d2 = d1 - sig * sqrt_tau
+
+            if self.option_type == "call":
+                mtm[:, live] = self.notional * (
+                    S_live * norm.cdf(d1) - K * np.exp(-r * tau_live) * norm.cdf(d2)
+                )
             else:
-                mtm[:, i] = self.notional * self._black_scholes(S_t, tau)
+                mtm[:, live] = self.notional * (
+                    K * np.exp(-r * tau_live) * norm.cdf(-d2) - S_live * norm.cdf(-d1)
+                )
+
+        # --- At expiry: intrinsic payoff ---
+        if np.any(at_exp):
+            S_exp = S[:, at_exp]             # (n_paths, n_at_exp) — usually 1 column
+            if self.option_type == "call":
+                mtm[:, at_exp] = self.notional * np.maximum(S_exp - self.strike, 0.0)
+            else:
+                mtm[:, at_exp] = self.notional * np.maximum(self.strike - S_exp, 0.0)
 
         return mtm
 

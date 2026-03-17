@@ -91,18 +91,20 @@ class HestonModel(StochasticModel):
         dW_v = random_draws[:, :, 1]
         dW_S = self.rho * dW_v + np.sqrt(1 - self.rho**2) * dZ1
 
+        # Precompute per-step scalars outside the loop
+        sqrt_dt = np.sqrt(dt)  # (T-1,)
+
         for i in range(T - 1):
-            sqrt_dt = np.sqrt(dt[i])
-            v_plus = np.maximum(v[:, i], 0.0)  # full truncation
+            v_plus = np.maximum(v[:, i], 0.0)  # full truncation — path-dependent, loop unavoidable
             sqrt_v = np.sqrt(v_plus)
 
             v[:, i + 1] = (
                 v[:, i]
                 + self.kappa * (self.theta - v_plus) * dt[i]
-                + self.xi * sqrt_v * sqrt_dt * dW_v[:, i]
+                + self.xi * sqrt_v * sqrt_dt[i] * dW_v[:, i]
             )
 
-            log_S = np.log(S[:, i]) + (self.mu - 0.5 * v_plus) * dt[i] + sqrt_v * sqrt_dt * dW_S[:, i]
+            log_S = np.log(S[:, i]) + (self.mu - 0.5 * v_plus) * dt[i] + sqrt_v * sqrt_dt[i] * dW_S[:, i]
             S[:, i + 1] = np.exp(log_S)
 
         paths = np.stack([S, v], axis=2)  # (n_paths, T, 2)

@@ -74,7 +74,14 @@ class Schwartz2F(StochasticModel):
         n_paths: int,
         random_draws: np.ndarray,
     ) -> SimulationResult:
-        """Euler-Maruyama simulation of both factors.
+        """Simulate both factors: exact OU for xi, vectorised BM for chi.
+
+        xi uses exact Gaussian transition (no Euler bias):
+            xi(t+dt) = xi(t)·exp(-κ·dt) + σ_xi·√((1-exp(-2κ·dt))/(2κ))·Z
+
+        chi is arithmetic BM with drift (Euler = exact for BM):
+            chi(t+dt) = chi(t) + (μ_χ - λ_χ)·dt + σ_χ·√dt·Z
+        chi is fully vectorised via cumsum.
 
         Parameters
         ----------
@@ -86,29 +93,32 @@ class Schwartz2F(StochasticModel):
         SimulationResult with factors ['S', 'xi', 'chi'], shape (n_paths, T, 3)
         """
         T = len(time_grid)
-        dt = np.diff(time_grid)
+        dt = np.diff(time_grid)  # (T-1,)
+        sqrt_dt = np.sqrt(dt)    # (T-1,)
+
+        dZ1 = random_draws[:, :, 0]  # orthogonal component, (n_paths, T-1)
+        dW_chi = random_draws[:, :, 1]
+        dW_xi = self.rho * dW_chi + np.sqrt(1.0 - self.rho**2) * dZ1
+
+        # --- chi: arithmetic BM — fully vectorised via cumsum ---
+        chi_increments = (
+            (self.mu_chi - self.lambda_chi) * dt
+            + self.sigma_chi * sqrt_dt * dW_chi
+        )  # (n_paths, T-1)
+        chi = np.empty((n_paths, T))
+        chi[:, 0] = self.chi0
+        chi[:, 1:] = self.chi0 + np.cumsum(chi_increments, axis=1)
+
+        # --- xi: exact OU transition — precompute per-step scalars ---
+        e_kdt = np.exp(-self.kappa * dt)                                   # (T-1,)
+        std_xi = self.sigma_xi * np.sqrt(
+            -np.expm1(-2.0 * self.kappa * dt) / (2.0 * self.kappa)
+        )                                                                    # (T-1,)
 
         xi = np.empty((n_paths, T))
-        chi = np.empty((n_paths, T))
         xi[:, 0] = self.xi0
-        chi[:, 0] = self.chi0
-
-        dZ1 = random_draws[:, :, 0]  # orthogonal component
-        dW_chi = random_draws[:, :, 1]
-        dW_xi = self.rho * dW_chi + np.sqrt(1 - self.rho**2) * dZ1
-
         for i in range(T - 1):
-            sqrt_dt = np.sqrt(dt[i])
-            xi[:, i + 1] = (
-                xi[:, i]
-                - self.kappa * xi[:, i] * dt[i]
-                + self.sigma_xi * sqrt_dt * dW_xi[:, i]
-            )
-            chi[:, i + 1] = (
-                chi[:, i]
-                + (self.mu_chi - self.lambda_chi) * dt[i]
-                + self.sigma_chi * sqrt_dt * dW_chi[:, i]
-            )
+            xi[:, i + 1] = xi[:, i] * e_kdt[i] + std_xi[i] * dW_xi[:, i]
 
         S = np.exp(xi + chi)
         paths = np.stack([S, xi, chi], axis=2)  # (n_paths, T, 3)
