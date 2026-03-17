@@ -296,3 +296,46 @@ class TestMonteCarloEngine:
         bad_corr = np.array([[1.0, 1.5], [1.5, 1.0]])  # not PSD
         with pytest.raises((ValueError, np.linalg.LinAlgError)):
             engine.run([gbm], grid, correlation_matrix=bad_corr)
+
+    def test_antithetic_odd_paths_raises(self):
+        with pytest.raises(ValueError, match="even"):
+            MonteCarloEngine(101, antithetic=True)
+
+    def test_antithetic_correct_shape(self):
+        gbm = GeometricBrownianMotion(S0=100, mu=0.05, sigma=0.20)
+        engine = MonteCarloEngine(1000, seed=SEED, antithetic=True)
+        grid = TimeGrid.uniform(1.0, 12)
+        results = engine.run([gbm], grid)
+        assert results["GBM"].paths.shape == (1000, 13, 1)
+
+    def test_antithetic_paths_are_exact_mirrors(self):
+        """For GBM: log(S_base) + log(S_anti) = 2·log(S0) + 2·(μ - σ²/2)·t exactly."""
+        mu, sigma, S0 = 0.05, 0.20, 100.0
+        gbm = GeometricBrownianMotion(S0=S0, mu=mu, sigma=sigma)
+        n = 1000
+        engine = MonteCarloEngine(n, seed=SEED, antithetic=True)
+        grid = TimeGrid.uniform(1.0, 12)
+        results = engine.run([gbm], grid)
+        log_S = np.log(results["GBM"].factor("S"))  # (n, T)
+        base_log = log_S[: n // 2]   # (n//2, T)
+        anti_log = log_S[n // 2 :]   # (n//2, T)
+        # The sum of log-prices should equal twice the deterministic drift path
+        expected_sum = 2 * np.log(S0) + 2 * (mu - 0.5 * sigma**2) * grid
+        assert np.allclose(base_log + anti_log, expected_sum, atol=1e-10)
+
+    def test_antithetic_reduces_variance(self):
+        """Antithetic estimator of E[S(T)] should have lower std error than plain MC
+        with the same n_paths."""
+        model = GeometricBrownianMotion(S0=100, mu=0.05, sigma=0.30)
+        grid = TimeGrid.uniform(1.0, 12)
+        n = 2000
+        n_trials = 50
+
+        plain_means, anti_means = [], []
+        for trial in range(n_trials):
+            plain = MonteCarloEngine(n, seed=trial)
+            anti = MonteCarloEngine(n, seed=trial, antithetic=True)
+            plain_means.append(plain.run([model], grid)["GBM"].factor("S")[:, -1].mean())
+            anti_means.append(anti.run([model], grid)["GBM"].factor("S")[:, -1].mean())
+
+        assert np.std(anti_means) < np.std(plain_means)

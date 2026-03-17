@@ -13,11 +13,19 @@ class MonteCarloEngine:
     Parameters
     ----------
     n_paths : int
-        Number of simulation paths.
+        Number of simulation paths. Must be even when ``antithetic=True``.
     seed : int | None
         Random seed for reproducibility.
     quasi_random : bool
         Use Sobol quasi-random sequences instead of pseudo-random normals.
+    antithetic : bool
+        Enable antithetic variates variance reduction. Generates ``n_paths // 2``
+        base draws Z and mirrors them as -Z, giving n_paths total paths. The
+        paired paths are negatively correlated, so estimator variance drops by
+        roughly (1 + ρ) / 2 where ρ is the within-pair correlation of the payoff
+        — for symmetric payoffs (e.g. log-normal terminal price) the reduction can
+        be near 100 % for the mean, and significant for option prices.
+        Requires ``n_paths`` to be even.
     """
 
     def __init__(
@@ -25,10 +33,16 @@ class MonteCarloEngine:
         n_paths: int,
         seed: int | None = None,
         quasi_random: bool = False,
+        antithetic: bool = False,
     ) -> None:
+        if antithetic and n_paths % 2 != 0:
+            raise ValueError(
+                f"n_paths must be even when antithetic=True; got {n_paths}."
+            )
         self.n_paths = n_paths
         self.seed = seed
         self.quasi_random = quasi_random
+        self.antithetic = antithetic
 
     def run(
         self,
@@ -85,20 +99,28 @@ class MonteCarloEngine:
 
     def _generate_draws(self, n_paths: int, n_steps: int, total_factors: int) -> np.ndarray:
         n_dims = n_steps * total_factors
-        if self.quasi_random:
-            sampler = qmc.Sobol(d=n_dims, scramble=True, seed=self.seed)
-            # Sobol requires power-of-2 sample counts; round up then trim
-            m = int(np.ceil(np.log2(max(n_paths, 2))))
-            raw = sampler.random_base2(m)[:n_paths]
-            draws_flat = qmc.scale(raw, 0, 1)
-            # Convert uniform to normal via inverse CDF
-            from scipy.stats import norm
-            draws_flat = norm.ppf(np.clip(draws_flat, 1e-10, 1 - 1e-10))
+
+        if self.antithetic:
+            # Generate n_paths // 2 base draws, then mirror as -Z.
+            n_base = n_paths // 2
+            base = self._raw_draws(n_base, n_dims)
+            draws_flat = np.concatenate([base, -base], axis=0)  # (n_paths, n_dims)
         else:
-            rng = np.random.default_rng(self.seed)
-            draws_flat = rng.standard_normal(size=(n_paths, n_dims))
+            draws_flat = self._raw_draws(n_paths, n_dims)
 
         return draws_flat.reshape(n_paths, n_steps, total_factors)
+
+    def _raw_draws(self, n: int, n_dims: int) -> np.ndarray:
+        """Generate n × n_dims standard normal draws (pseudo- or quasi-random)."""
+        if self.quasi_random:
+            sampler = qmc.Sobol(d=n_dims, scramble=True, seed=self.seed)
+            m = int(np.ceil(np.log2(max(n, 2))))
+            raw = sampler.random_base2(m)[:n]
+            from scipy.stats import norm
+            return norm.ppf(np.clip(raw, 1e-10, 1 - 1e-10))
+        else:
+            rng = np.random.default_rng(self.seed)
+            return rng.standard_normal(size=(n, n_dims))
 
     @staticmethod
     def _validate_correlation(corr: np.ndarray, n: int) -> None:
