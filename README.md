@@ -1,11 +1,16 @@
 # risk_analytics
 
-A Python library for Monte Carlo counterparty credit risk analytics. Simulates
-correlated stochastic paths for interest rates, equities, FX, and commodities on a
-memory-efficient sparse grid; prices instruments on those paths; computes bilateral exposure
-metrics (EE, PFE, EPE, EEPE, CVA/DVA) with full ISDA CSA support including VM, IM (Schedule
-and SIMM), and collateral. An end-to-end `RiskEngine` accepts a YAML/dict config and runs the
-full pipeline, with built-in parallel execution and stress testing.
+A Python library for Monte Carlo counterparty credit risk analytics. Simulates correlated
+stochastic paths for interest rates, equities, FX, and commodities; prices instruments on
+those paths; and computes bilateral exposure metrics (EE, PFE, EPE, EEPE, CVA/DVA) with
+ISDA CSA support covering VM, IM (Schedule and SIMM), and collateral.
+
+**What this library provides:** correct implementations of the core analytics — simulation,
+pricing, margining, and XVA — structured around a YAML-driven `RiskEngine`.
+
+**What you still need to build for a real deployment:** a market data connector (Bloomberg,
+Refinitiv, internal curves service), a trade loader (front-office system, OMS), governance
+controls (access management, approvals), audit logging, and operational monitoring.
 
 ---
 
@@ -31,6 +36,8 @@ risk_analytics/
 │   ├── base.py          # StochasticModel + Pricer ABCs
 │   │                    #   interpolation_space — sparse path interpolation space per factor
 │   │                    #   cashflow_times()    — payment dates for grid augmentation
+│   │                    #   price_at()          — single time-step MTM slice
+│   ├── stateful.py      # PathState + StatefulPricer ABC (path-dependent instruments)
 │   ├── engine.py        # MonteCarloEngine (Cholesky correlation, antithetic, Sobol)
 │   ├── grid.py          # TimeGrid (uniform); SparseTimeGrid (daily→weekly→monthly)
 │   ├── paths.py         # SimulationResult — at(t) / at_times(ts) sparse interpolation
@@ -257,10 +264,6 @@ ns_mtms = agr.netting_set_mtms(simulation_results) # dict[ns_id → (n_paths, T)
 cf_times = agr.all_cashflow_times()
 ```
 
-> **Future:** a business/reporting `Portfolio` grouping (desk, book, region) will be
-> added as a thin additive view over agreement results. The `Agreement` class handles
-> all computation; `Portfolio` will handle rollup only.
-
 ---
 
 ## Pipeline Engine
@@ -464,7 +467,7 @@ out    = engine.run(simulation_result)
 out.ee_profile        # (T,) expected exposure
 out.pfe_profile       # (T,) peak future exposure
 out.ene_profile       # (T,) expected negative exposure
-out.ee_mpor_profile   # (T,) EE under MPOR look-ahead
+out.ee_mpor_profile   # (T,) approximate EE under MPOR look-ahead (see DESIGN.md §6)
 out.peak_ee           # scalar
 out.peak_pfe          # scalar
 ```
