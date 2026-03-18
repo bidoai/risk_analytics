@@ -12,7 +12,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   worker process.  Replace with `SimulationSharedMemory` to avoid the O(workers × data)
   memory blow-up described in DESIGN.md §9.
 
-- [ ] **[P1] Remove dead code: `_make_aggregate_ns()` in `pipeline/engine.py`.**
+- [x] **[P1] Remove dead code: `_make_aggregate_ns()` in `pipeline/engine.py`.**
   The function raises `NotImplementedError` and is no longer referenced.
 
 - [ ] **[P2] `pipeline/persistence.py` — lazy RunResult loading.**
@@ -20,7 +20,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   implementation should memory-map per-agreement profile arrays and load scalars eagerly.
   DuckDB can be used for querying across runs.
 
-- [ ] **[P2] Support `StatefulPricer` instruments inside `RiskEngine`.**
+- [x] **[P2] Support `StatefulPricer` instruments inside `RiskEngine`.**
   `NettingSet._price_trade()` calls `pricer.price(result)` which is correct for both
   plain and stateful pricers, but it tries all models in order until one succeeds.  For
   stateful pricers this is unnecessarily expensive and can produce wrong results if an
@@ -35,7 +35,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
 
 ## Exposure / Netting
 
-- [ ] **[P1] `NettingSet._price_trade()` model lookup is fragile.**
+- [x] **[P1] `NettingSet._price_trade()` model lookup is fragile.**
   It iterates all models until one doesn't raise, so the first model whose factor names
   happen to match wins — even if it is the wrong model.  Fix: `NettingSet` should
   store trades as `Trade` objects (not `(str, Pricer)` tuples) so that `trade.model_name`
@@ -109,15 +109,15 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
 
 ## Testing
 
-- [ ] **[P2] Integration test: `RiskEngine` end-to-end with `StatefulPricer`.**
+- [x] **[P2] Integration test: `RiskEngine` end-to-end with `StatefulPricer`.**
   Add a `BarrierOption` trade to a YAML config and run the full pipeline to confirm
   `NettingSet` + `Agreement` + `RiskEngine` handle stateful pricers correctly.
 
-- [ ] **[P2] Property-based tests for `REGVMStepper`.**
+- [x] **[P2] Property-based tests for `REGVMStepper`.**
   CSB should be non-negative when `threshold=0`, `mta=0`; post-margin CE should equal 0
   when `V(t) > 0`; CSB should never decrease below `ia_counterparty - ia_party`.
 
-- [ ] **[P2] Regression tests for `_discount_factors()` against known Hull-White prices.**
+- [x] **[P2] Regression tests for `_discount_factors()` against known Hull-White prices.**
   ZCB prices computed via the affine formula should match the closed-form
   `P(0,T) * exp(B*f(0,t) - ...)` expression to machine precision.
 
