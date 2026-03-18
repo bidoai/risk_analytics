@@ -166,3 +166,29 @@ class InterestRateSwap(Pricer):
             mtm[:, i] = swap_value if self.payer else -swap_value
 
         return mtm
+
+    def price_at(self, result: SimulationResult, t_idx: int) -> np.ndarray:
+        """Efficient single-step MTM using only the r_t slice at t_idx."""
+        t = float(result.time_grid[t_idx])
+        r_t = result.factor_at("r", t_idx)          # (n_paths,)
+        hw_model = getattr(result, "model", None)
+        n_paths = len(r_t)
+
+        future_mask = self.payment_times > t
+        if not future_mask.any():
+            return np.zeros(n_paths)
+
+        future_T = self.payment_times[future_mask]
+        future_delta = self.deltas[future_mask]
+
+        df = _discount_factors(r_t, t, future_T, hw_model)           # (n_paths, k)
+        annuity = (future_delta[None, :] * df).sum(axis=1)           # (n_paths,)
+
+        tau_N = self.maturity - t
+        P_tN = (
+            _discount_factors(r_t, t, np.array([self.maturity]), hw_model)[:, 0]
+            if tau_N > 0
+            else np.ones(n_paths)
+        )
+        swap_value = self.notional * ((1.0 - P_tN) - self.fixed_rate * annuity)
+        return swap_value if self.payer else -swap_value

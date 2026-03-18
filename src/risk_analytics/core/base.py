@@ -188,3 +188,16 @@ class Pricer(ABC):
         Override in subclasses for instruments with scheduled payments.
         """
         return []
+
+    def price_at(self, result: SimulationResult, t_idx: int) -> np.ndarray:
+        """Return MTM for all paths at a single time index.
+
+        Default delegates to ``price(result)[:, t_idx]``.
+        Override for efficient O(1)-in-T implementations that only need
+        the risk-factor slice at ``t_idx`` (e.g. vanilla IRS, bonds).
+
+        Returns
+        -------
+        np.ndarray, shape (n_paths,)
+        """
+        return self.price(result)[:, t_idx]

@@ -111,6 +111,15 @@ class ZeroCouponBond(Pricer):
 
         return prices
 
+    def price_at(self, result: SimulationResult, t_idx: int) -> np.ndarray:
+        """Efficient single-step MTM using only the r_t slice at t_idx."""
+        t = float(result.time_grid[t_idx])
+        if t >= self.maturity:
+            return np.zeros(result.n_paths)
+        r_t = result.factor_at("r", t_idx)
+        hw_model = getattr(result, "model", None)
+        return self.face_value * _discount_factors(r_t, t, np.array([self.maturity]), hw_model)[:, 0]
+
 
 class FixedRateBond(Pricer):
     """Price a fixed-rate coupon bond on simulated short-rate paths.
@@ -207,3 +216,29 @@ class FixedRateBond(Pricer):
             prices[:, i] = pv
 
         return prices
+
+    def price_at(self, result: SimulationResult, t_idx: int) -> np.ndarray:
+        """Efficient single-step MTM using only the r_t slice at t_idx."""
+        t = float(result.time_grid[t_idx])
+        r_t = result.factor_at("r", t_idx)
+        hw_model = getattr(result, "model", None)
+        n_paths = len(r_t)
+
+        future_mask = self.coupon_times > t
+        if not future_mask.any() and self.maturity <= t:
+            return np.zeros(n_paths)
+
+        pv = np.zeros(n_paths)
+        if future_mask.any():
+            future_T = self.coupon_times[future_mask]
+            future_C = self.coupon_amounts[future_mask]
+            df = _discount_factors(r_t, t, future_T, hw_model)   # (n_paths, k)
+            pv += (future_C[None, :] * df).sum(axis=1)
+
+        tau_mat = self.maturity - t
+        if tau_mat > 0:
+            pv += self.face_value * _discount_factors(
+                r_t, t, np.array([self.maturity]), hw_model
+            )[:, 0]
+
+        return pv
