@@ -65,13 +65,15 @@ class REGVMStepper:
         ret = np.where(excess > csa.mta_counterparty, excess, 0.0)
         ret = np.maximum(ret, 0.0)
 
-        # Apply rounding if configured
+        # Apply rounding per ISDA 2016 VM CSA:
+        #   Delivery amounts round UP   (ceil) — we receive at least what we're owed
+        #   Return amounts   round DOWN (floor) — we return no more than the excess
         if csa.rounding_nearest > 0:
             delivery = (
-                np.floor(delivery / csa.rounding_nearest + 0.5) * csa.rounding_nearest
+                np.ceil(delivery / csa.rounding_nearest) * csa.rounding_nearest
             )
             ret = (
-                np.floor(ret / csa.rounding_nearest + 0.5) * csa.rounding_nearest
+                np.floor(ret / csa.rounding_nearest) * csa.rounding_nearest
             )
 
         # Update CSB
