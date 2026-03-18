@@ -48,6 +48,10 @@ class EuropeanOption(Pricer):
         self.option_type = option_type
         self.notional = notional
 
+    def cashflow_times(self) -> list:
+        """Return the expiry as the single cashflow time."""
+        return [self.expiry]
+
     def price(self, result: SimulationResult) -> np.ndarray:
         """MTM via Black-Scholes before expiry; intrinsic value at expiry.
 

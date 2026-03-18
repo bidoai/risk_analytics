@@ -41,6 +41,7 @@ class HullWhite1F(StochasticModel):
         self.sigma = sigma
         self.r0 = r0
         self.theta = theta  # shape (T-1,) — one value per time step
+        self._curve = None
 
     # ------------------------------------------------------------------
     # StochasticModel interface
@@ -53,6 +54,10 @@ class HullWhite1F(StochasticModel):
     @property
     def name(self) -> str:
         return "HullWhite1F"
+
+    @property
+    def interpolation_space(self) -> list:
+        return ["linear"]
 
     def simulate(
         self,
@@ -119,6 +124,8 @@ class HullWhite1F(StochasticModel):
             paths=paths[:, :, np.newaxis],
             model_name=self.name,
             factor_names=["r"],
+            interpolation_space=self.interpolation_space,
+            model=self,
         )
 
     def calibrate(self, market_data: dict) -> None:
@@ -141,6 +148,7 @@ class HullWhite1F(StochasticModel):
             zero_rates = np.asarray(market_data["zero_rates"])
             curve = YieldCurve(tenors, zero_rates)
 
+        self._curve = curve
         self.r0 = float(curve.zero_rate(0.0))
         logger.info(
             "HullWhite1F: fitting theta to yield curve (%s, %d tenors), r0=%.4f",
@@ -184,16 +192,43 @@ class HullWhite1F(StochasticModel):
     def discount_factor(self, t: float, T_mat: float, r_t: np.ndarray) -> np.ndarray:
         """Analytical zero-coupon bond price P(t, T) under Hull-White.
 
-        B(t,T) = (1 - exp(-a*(T-t))) / a
-        ln P(t,T) = -B*r(t) + ln(P(0,T)/P(0,t)) - 0.5*sigma^2*B^2*...
-        Simplified here as the Vasicek formula (θ=0 baseline):
-        P(t,T) = A(t,T) * exp(-B(t,T) * r(t))
+        Full affine term structure formula:
+            P(t,T) = A(t,T) · exp(-B(t,T) · r(t))
+
+        When calibrated to an initial curve:
+            B(t,T) = (1 - exp(-a(T-t))) / a
+            ln A(t,T) = ln(P(0,T)/P(0,t)) + B·f(0,t) - σ²/(4a)·B²·(1 - exp(-2at))
+
+        Fallback (pure Vasicek, no curve):
+            ln A(t,T) = (b - σ²/(2a²))·(B - τ) - σ²·B²/(4a)   where b = r0
         """
         tau = T_mat - t
         a, sigma = self.a, self.sigma
-        B = (1 - np.exp(-a * tau)) / a if a != 0 else tau
-        A = np.exp((B - tau) * (a**2 * 0.0 - sigma**2 / (2 * a**2)) - sigma**2 * B**2 / (4 * a))
-        return A * np.exp(-B * r_t)
+
+        if a != 0:
+            B = (1.0 - np.exp(-a * tau)) / a
+        else:
+            B = tau
+
+        if self._curve is not None:
+            t_safe = max(float(t), 1e-9)
+            p0T = self._curve.discount_factor(float(T_mat))
+            p0t = self._curve.discount_factor(float(t)) if t > 1e-9 else 1.0
+            f0t = float(self._curve.instantaneous_forward(t_safe))
+            if a != 0:
+                conv = (sigma ** 2 / (4.0 * a)) * B ** 2 * (1.0 - np.exp(-2.0 * a * float(t)))
+            else:
+                conv = 0.5 * sigma ** 2 * float(t) * B ** 2
+            ln_A = np.log(p0T / p0t) + B * f0t - conv
+        else:
+            # Pure Vasicek fallback: long-term mean b ≈ r0
+            b = self.r0
+            if a != 0:
+                ln_A = (b - sigma ** 2 / (2.0 * a ** 2)) * (B - tau) - sigma ** 2 * B ** 2 / (4.0 * a)
+            else:
+                ln_A = b * (B - tau) - 0.5 * sigma ** 2 * tau * B ** 2
+
+        return np.exp(ln_A - B * r_t)
 
     # ------------------------------------------------------------------
     # Private

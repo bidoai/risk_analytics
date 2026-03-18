@@ -11,6 +11,54 @@ if TYPE_CHECKING:
     from risk_analytics.core.schedule import Schedule
 
 
+def _discount_factors(r_t: np.ndarray, t: float, T_array: np.ndarray, model) -> np.ndarray:
+    """Compute P(t, T_i | r_t) for all paths and payment times.
+
+    Uses the Hull-White affine formula when the model has parameters a, sigma,
+    and optionally an initial yield curve. Falls back to flat-curve exp(-r·τ)
+    when no model information is available.
+
+    Parameters
+    ----------
+    r_t : np.ndarray, shape (n_paths,)
+        Short rate at time t on each path.
+    t : float
+        Current time.
+    T_array : np.ndarray, shape (k,)
+        Payment / maturity times, all > t.
+    model : StochasticModel or None
+        Hull-White model instance (or None for flat-curve fallback).
+
+    Returns
+    -------
+    np.ndarray, shape (n_paths, k)
+    """
+    tau_vec = T_array - t                   # (k,)
+
+    if model is not None and hasattr(model, "a") and model.a != 0:
+        a = model.a
+        sigma = model.sigma
+        B_vec = (1.0 - np.exp(-a * tau_vec)) / a   # (k,)
+
+        curve = getattr(model, "_curve", None)
+        if curve is not None:
+            p0T = np.array([curve.discount_factor(float(T)) for T in T_array])
+            p0t = curve.discount_factor(float(t)) if t > 1e-9 else 1.0
+            f0t = float(curve.instantaneous_forward(max(float(t), 1e-9)))
+            conv = (sigma ** 2 / (4.0 * a)) * B_vec ** 2 * (1.0 - np.exp(-2.0 * a * float(t)))
+            ln_A = np.log(p0T / p0t) + B_vec * f0t - conv
+        else:
+            b = model.r0
+            ln_A = ((b - sigma ** 2 / (2.0 * a ** 2)) * (B_vec - tau_vec)
+                    - sigma ** 2 * B_vec ** 2 / (4.0 * a))
+
+        # (n_paths, k)  — A and B are scalars per payment time
+        return np.exp(ln_A[None, :] - B_vec[None, :] * r_t[:, None])
+
+    # Flat-curve fallback (a=0 or no model)
+    return np.exp(-r_t[:, None] * tau_vec[None, :])
+
+
 class ZeroCouponBond(Pricer):
     """Price a zero-coupon bond on simulated short-rate paths.
 
@@ -30,54 +78,36 @@ class ZeroCouponBond(Pricer):
         self.maturity = maturity
         self.face_value = face_value
 
+    def cashflow_times(self) -> list:
+        """Return the maturity as the single cashflow time."""
+        return [self.maturity]
+
     def price(self, result: SimulationResult) -> np.ndarray:
         """Compute bond MTM on each path at each time step.
 
-        Parameters
-        ----------
-        result : SimulationResult
-            From a short-rate model (must have factor 'r').
+        Uses the Hull-White affine discount factor P(t,T) = A(t,T)·exp(-B(t,T)·r(t))
+        when the result carries a Hull-White model reference, otherwise falls back to
+        the flat-curve approximation exp(-r(t)·(T-t)).
 
         Returns
         -------
         np.ndarray, shape (n_paths, T)
-            Bond price at each time/path. Zero after maturity.
+            Bond price at each time/path. Zero at or after maturity.
         """
-        r = result.factor("r")  # (n_paths, T)
+        r = result.factor("r")          # (n_paths, T)
         time_grid = result.time_grid
         T_mat = self.maturity
         n_paths, n_steps = r.shape
+        hw_model = getattr(result, "model", None)
 
         prices = np.zeros((n_paths, n_steps))
+        T_arr = np.array([T_mat])
 
         for i, t in enumerate(time_grid):
             if t >= T_mat:
                 break
-            # Remaining path from t to maturity
-            future_mask = time_grid >= t
-            future_times = time_grid[future_mask]
-            future_r = r[:, future_mask]
-
-            # Cap at maturity
-            mat_idx = np.searchsorted(future_times, T_mat)
-            if mat_idx >= len(future_times):
-                mat_idx = len(future_times) - 1
-
-            t_integrated = np.concatenate([future_times[:mat_idx + 1], [T_mat]])
-            t_integrated = np.unique(np.clip(t_integrated, t, T_mat))
-
-            # Interpolate rates at integration points
-            r_at_t = np.interp(t_integrated, time_grid, r.mean(axis=0))
-            r_paths_i = np.interp(
-                t_integrated,
-                time_grid,
-                r.T,
-            ).T if t_integrated[0] != t else future_r[:, :len(t_integrated)]
-
-            # Trapezoidal discount: exp(-∫ r dt)
-            discount = np.exp(-np.trapezoid(r[:, i:i + len(t_integrated)], time_grid[i:i + len(t_integrated)], axis=1) if i + len(t_integrated) <= n_steps else -r[:, i] * (T_mat - t))
-
-            prices[:, i] = self.face_value * np.exp(-r[:, i] * (T_mat - t))
+            r_t = r[:, i]
+            prices[:, i] = self.face_value * _discount_factors(r_t, t, T_arr, hw_model)[:, 0]
 
         return prices
 
@@ -131,6 +161,13 @@ class FixedRateBond(Pricer):
             self.coupon_times = np.array([dt * (i + 1) for i in range(n_coupons)])
             self.coupon_amounts = np.full(n_coupons, face_value * coupon_rate * dt)
 
+    def cashflow_times(self) -> list:
+        """Return coupon times plus maturity (deduplicated)."""
+        times = list(self.coupon_times)
+        if self.maturity not in times:
+            times.append(self.maturity)
+        return sorted(times)
+
     def price(self, result: SimulationResult) -> np.ndarray:
         """Sum of discounted cash flows using Vasicek-style discount factors.
 
@@ -146,6 +183,7 @@ class FixedRateBond(Pricer):
         time_grid = result.time_grid
         n_paths, n_steps = r.shape
         prices = np.zeros((n_paths, n_steps))
+        hw_model = getattr(result, "model", None)
 
         for i, t in enumerate(time_grid):
             future_mask = self.coupon_times > t
@@ -156,14 +194,15 @@ class FixedRateBond(Pricer):
             future_C = self.coupon_amounts[future_mask]      # (k,)
 
             # Discounted coupons — vectorised over payments
-            tau = future_T - t                               # (k,)
-            df = np.exp(-r[:, i, None] * tau[None, :])      # (n_paths, k)
-            pv = (future_C[None, :] * df).sum(axis=1)       # (n_paths,)
+            df = _discount_factors(r[:, i], t, future_T, hw_model)   # (n_paths, k)
+            pv = (future_C[None, :] * df).sum(axis=1)                # (n_paths,)
 
             # Face value repayment
             tau_mat = self.maturity - t
             if tau_mat > 0:
-                pv = pv + self.face_value * np.exp(-r[:, i] * tau_mat)
+                pv = pv + self.face_value * _discount_factors(
+                    r[:, i], t, np.array([self.maturity]), hw_model
+                )[:, 0]
 
             prices[:, i] = pv
 
