@@ -2,6 +2,8 @@
 
 from .backtest import BacktestEngine, BacktestResult
 from .core import MonteCarloEngine, Pricer, SimulationResult, StochasticModel, TimeGrid, YieldCurve, Interpolation
+from .core.market_data import MarketData, BumpType, ScenarioBump
+from .core.grid import SparseTimeGrid
 from .models import GeometricBrownianMotion, HestonModel, HullWhite1F, Schwartz1F, Schwartz2F
 from .pricing import EuropeanOption, FixedRateBond, InterestRateSwap, ZeroCouponBond
 from .exposure import (
@@ -19,6 +21,8 @@ from .exposure import (
     BilateralExposureCalculator,
     ISDAExposureCalculator,
 )
+from .portfolio import Trade, Agreement
+from .pipeline import RiskEngine, RunResult, AgreementResult, EngineConfig
 
 __all__ = [
     # Backtest
@@ -32,6 +36,12 @@ __all__ = [
     "SimulationResult",
     "MonteCarloEngine",
     "TimeGrid",
+    # Market data
+    "MarketData",
+    "BumpType",
+    "ScenarioBump",
+    # Sparse grid
+    "SparseTimeGrid",
     # Models
     "HullWhite1F",
     "GeometricBrownianMotion",
@@ -58,4 +68,12 @@ __all__ = [
     "SimmCalculator",
     "BilateralExposureCalculator",
     "ISDAExposureCalculator",
+    # Portfolio
+    "Trade",
+    "Agreement",
+    # Pipeline
+    "RiskEngine",
+    "RunResult",
+    "AgreementResult",
+    "EngineConfig",
 ]
