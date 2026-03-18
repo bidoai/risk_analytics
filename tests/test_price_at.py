@@ -5,8 +5,21 @@ import numpy as np
 import pytest
 
 from pyxva.core.paths import SimulationResult
+from pyxva.pricing.equity.vanilla_option import EuropeanOption
 from pyxva.pricing.rates.swap import InterestRateSwap
 from pyxva.pricing.rates.bond import ZeroCouponBond, FixedRateBond
+
+
+def _equity_result(n_paths: int = 50, n_steps: int = 21, S0: float = 100.0) -> SimulationResult:
+    """Flat equity path at constant spot S0."""
+    time_grid = np.linspace(0, 5.0, n_steps)
+    paths = np.full((n_paths, n_steps, 1), S0)
+    return SimulationResult(
+        time_grid=time_grid,
+        paths=paths,
+        model_name="GBM",
+        factor_names=["S"],
+    )
 
 
 def _hw_result(n_paths: int = 50, n_steps: int = 21, r0: float = 0.04) -> SimulationResult:
@@ -19,6 +32,53 @@ def _hw_result(n_paths: int = 50, n_steps: int = 21, r0: float = 0.04) -> Simula
         model_name="HW",
         factor_names=["r"],
     )
+
+
+class TestPriceAtEuropeanOption:
+    def test_matches_full_price(self):
+        """price_at() should agree with price()[:, t_idx] at every step."""
+        result = _equity_result(n_paths=50, n_steps=21)
+        opt = EuropeanOption(strike=100.0, expiry=3.0, sigma=0.20, risk_free_rate=0.04)
+        full = opt.price(result)
+        for t_idx in [0, 5, 10, 14]:  # all pre-expiry steps
+            np.testing.assert_allclose(
+                opt.price_at(result, t_idx),
+                full[:, t_idx],
+                rtol=1e-8,
+                err_msg=f"EuropeanOption price_at mismatch at t_idx={t_idx}",
+            )
+
+    def test_at_expiry_intrinsic(self):
+        """At expiry, price_at should return the intrinsic payoff."""
+        n_paths = 100
+        time_grid = np.array([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+        S = np.linspace(80.0, 120.0, n_paths)
+        paths = np.tile(S[:, None, None], (1, len(time_grid), 1))
+        result = SimulationResult(
+            time_grid=time_grid,
+            paths=paths,
+            model_name="GBM",
+            factor_names=["S"],
+        )
+        opt = EuropeanOption(strike=100.0, expiry=3.0, sigma=0.20)
+        at_exp_idx = 3  # t = 3.0 == expiry
+        payoff = opt.price_at(result, at_exp_idx)
+        expected = np.maximum(S - 100.0, 0.0)
+        np.testing.assert_allclose(payoff, expected, atol=1e-10)
+
+    def test_after_expiry_zero(self):
+        """Past expiry the option has no remaining value."""
+        result = _equity_result(n_paths=30, n_steps=11)
+        opt = EuropeanOption(strike=100.0, expiry=2.0, sigma=0.20)
+        last_idx = 10  # t = 5.0 > 2.0
+        np.testing.assert_array_equal(opt.price_at(result, last_idx), 0.0)
+
+    def test_put_matches_full_price(self):
+        result = _equity_result(n_paths=40, n_steps=21)
+        put = EuropeanOption(strike=95.0, expiry=2.5, sigma=0.25, option_type="put")
+        full = put.price(result)
+        t_idx = 7
+        np.testing.assert_allclose(put.price_at(result, t_idx), full[:, t_idx], rtol=1e-8)
 
 
 class TestPriceAtIRS:

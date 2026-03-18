@@ -86,7 +86,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
 
 ## Pricing
 
-- [ ] **[P2] `EuropeanOption.price_at()` override.**
+- [x] **[P2] `EuropeanOption.price_at()` override.**
   `EuropeanOption` currently falls back to the default `price(result)[:, t_idx]`.
   An efficient override computing only the `(n_paths,)` Black-Scholes MTM from the spot
   slice would be consistent with the IRS/bond overrides.

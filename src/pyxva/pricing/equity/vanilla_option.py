@@ -108,6 +108,34 @@ class EuropeanOption(Pricer):
 
         return mtm
 
+    def price_at(self, result: SimulationResult, t_idx: int) -> np.ndarray:
+        """MTM at a single time step — O(n_paths), avoids allocating (n_paths, T).
+
+        Consistent with IRS and bond overrides: only the spot slice at t_idx
+        is needed, making this efficient for StreamingExposureEngine.
+
+        Returns
+        -------
+        np.ndarray, shape (n_paths,)
+        """
+        t = result.time_grid[t_idx]
+        tau = self.expiry - t
+        S = result.factor("S")[:, t_idx]  # (n_paths,)
+
+        if tau < -1e-10:
+            # Past expiry: option has expired worthless
+            return np.zeros(len(S))
+
+        if abs(tau) <= 1e-10:
+            # At expiry: intrinsic payoff
+            if self.option_type == "call":
+                return self.notional * np.maximum(S - self.strike, 0.0)
+            else:
+                return self.notional * np.maximum(self.strike - S, 0.0)
+
+        # Before expiry: Black-Scholes on the single spot slice
+        return self.notional * self._black_scholes(S, tau)
+
     def _black_scholes(self, S: np.ndarray, tau: float) -> np.ndarray:
         """Vectorised Black-Scholes price."""
         K = self.strike
