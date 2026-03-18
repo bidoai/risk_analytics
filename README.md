@@ -55,12 +55,25 @@ print(f"CVA: {result.total_cva:,.0f}")
 ## Installation
 
 ```bash
-uv sync          # installs all dependencies
-uv run pytest    # 405 tests
-uv run python demo.py
+pip install pyxva
+```
+
+Or with `uv`:
+
+```bash
+uv add pyxva
 ```
 
 **Requirements:** Python 3.12+, `numpy`, `scipy`, `pandas`, `pyyaml`
+
+### Development
+
+```bash
+git clone https://github.com/bidoai/pyxva
+cd pyxva
+uv sync
+uv run pytest    # 405 tests
+```
 
 See [DESIGN.md](DESIGN.md) for the reasoning behind key architectural decisions.
 
