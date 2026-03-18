@@ -1,6 +1,6 @@
 # risk_analytics
 
-A Python library for production Monte Carlo counterparty credit risk analytics. Simulates
+A Python library for production style Monte Carlo counterparty credit risk analytics. Simulates
 correlated stochastic paths for interest rates, equities, FX, and commodities on a
 memory-efficient sparse grid; prices instruments on those paths; computes bilateral exposure
 metrics (EE, PFE, EPE, EEPE, CVA/DVA) with full ISDA CSA support including VM, IM (Schedule
@@ -13,11 +13,13 @@ full pipeline, with built-in parallel execution and stress testing.
 
 ```bash
 uv sync          # installs all dependencies
-uv run pytest    # 352 tests
+uv run pytest    # 391 tests
 uv run python demo.py
 ```
 
 **Requirements:** Python 3.12+, `numpy`, `scipy`, `pandas`, `pyyaml`
+
+See [DESIGN.md](DESIGN.md) for the reasoning behind key architectural decisions.
 
 ---
 
@@ -45,7 +47,8 @@ risk_analytics/
 ├── pricing/
 │   ├── rates/swap.py              # InterestRateSwap (uniform or Schedule)
 │   ├── rates/bond.py              # ZeroCouponBond, FixedRateBond
-│   └── equity/vanilla_option.py   # EuropeanOption — vectorised Black-Scholes
+│   ├── equity/vanilla_option.py   # EuropeanOption — vectorised Black-Scholes
+│   └── exotic/barrier_option.py   # BarrierOption — down/up-and-out (StatefulPricer)
 ├── portfolio/
 │   ├── trade.py                   # Trade — binds Pricer to a named model
 │   └── agreement.py               # Agreement — ISDA MA scope; aggregate VM, CVA
@@ -57,11 +60,15 @@ risk_analytics/
 │   ├── margin/im.py               # REGIMEngine — Schedule IM
 │   ├── margin/simm.py             # SimmCalculator — ISDA SIMM IR/Equity delta
 │   ├── collateral.py              # CollateralAccount + HaircutSchedule
-│   └── csa.py                     # CSATerms (threshold, MTA, MPOR, IM model)
+│   ├── csa.py                     # CSATerms (threshold, MTA, MPOR, IM model)
+│   └── streaming/
+│       ├── engine.py              # StreamingExposureEngine — step-loop, never full MTM matrix
+│       └── vm_stepper.py          # REGVMStepper — per-path CSB state updated each step
 ├── pipeline/
-│   ├── config.py                  # EngineConfig — YAML/dict parser + TradeFactory
+│   ├── config.py                  # EngineConfig — YAML/dict parser + TradeFactory.register()
 │   ├── engine.py                  # RiskEngine — 3-phase pipeline + parallel execution
-│   └── result.py                  # RunResult, AgreementResult, NettingSetSummary
+│   ├── result.py                  # RunResult, AgreementResult, NettingSetSummary
+│   └── shared_memory.py           # SimulationSharedMemory — zero-copy paths via SharedMemory
 └── backtest/
     ├── engine.py                  # BacktestEngine — PFE exceedances, Kupiec, bias t-test
     └── result.py                  # BacktestResult
@@ -371,7 +378,159 @@ result.to_parquet("./results/")   # summary.parquet, ee_profiles.parquet, pfe_pr
 | `pse` / `epe` / `eepe` | Exposure scalars |
 
 Supported trade types in YAML: `InterestRateSwap`, `ZeroCouponBond`, `FixedRateBond`,
-`EuropeanOption`. Add new types by extending `TradeFactory`.
+`EuropeanOption`. Register custom types with the `@TradeFactory.register` decorator (see below).
+
+---
+
+## Path-Dependent Instruments (StatefulPricer)
+
+`StatefulPricer` extends `Pricer` for instruments that require accumulating information
+along each simulated path — barrier monitoring, Asian averaging, target-redemption
+features, etc.
+
+```python
+from dataclasses import dataclass
+import numpy as np
+from risk_analytics.core.stateful import PathState, StatefulPricer
+
+@dataclass
+class MyState(PathState):
+    running_max: np.ndarray   # (n_paths,)
+
+    @classmethod
+    def allocate(cls, n_paths):
+        return cls(running_max=np.full(n_paths, -np.inf))
+
+class LookbackCall(StatefulPricer):
+    def __init__(self, expiry):
+        self.expiry = expiry
+
+    def allocate_state(self, n_paths):
+        return MyState.allocate(n_paths)
+
+    def step(self, result, t, t_idx, state):
+        S_t = result.factor_at("S", t_idx)
+        new_max = np.maximum(state.running_max, S_t)
+        mtm = np.maximum(S_t - new_max, 0.0) if t >= self.expiry else np.zeros(len(S_t))
+        return mtm, MyState(running_max=new_max)
+```
+
+### BarrierOption
+
+`BarrierOption` is a ready-made `StatefulPricer` for European down-and-out / up-and-out
+options. The barrier is monitored at each simulation step.
+
+```python
+from risk_analytics.pricing.exotic import BarrierOption
+
+opt = BarrierOption(
+    strike=105.0,
+    barrier=90.0,
+    expiry=1.0,
+    barrier_type="down-out",   # or "up-out"
+    factor_name="S",
+    option_type="call",        # or "put"
+    risk_free_rate=0.04,
+)
+mtm = opt.price(simulation_result)   # (n_paths, T)
+```
+
+### price_at()
+
+All `Pricer` subclasses expose `price_at(result, t_idx) -> (n_paths,)` for single-step
+MTM. The default delegates to `price(result)[:, t_idx]`. `InterestRateSwap`,
+`ZeroCouponBond`, and `FixedRateBond` override it to compute only the requested slice,
+avoiding materialising the full `(n_paths, T)` matrix. `StatefulPricer.price_at()` replays
+the step loop from t=0 to accumulate state correctly.
+
+---
+
+## Streaming Exposure (Memory-Efficient)
+
+`StreamingExposureEngine` computes EE / PFE / ENE / EE-MPOR by stepping through the time
+grid one step at a time, never holding the full `(n_paths, T)` MTM matrix in memory. It
+works with both plain `Pricer` and `StatefulPricer` instruments.
+
+```python
+from risk_analytics.exposure.streaming import StreamingExposureEngine
+from risk_analytics.exposure.csa import CSATerms
+
+trades = [("payer_5y", swap), ("barrier_call", barrier_opt)]
+csa    = CSATerms.regvm_standard("CP_A", mta=10_000)
+
+engine = StreamingExposureEngine(trades, csa, confidence=0.95)
+out    = engine.run(simulation_result)
+
+out.ee_profile        # (T,) expected exposure
+out.pfe_profile       # (T,) peak future exposure
+out.ene_profile       # (T,) expected negative exposure
+out.ee_mpor_profile   # (T,) EE under MPOR look-ahead
+out.peak_ee           # scalar
+out.peak_pfe          # scalar
+```
+
+`REGVMStepper` can also be used stand-alone to test margining logic:
+
+```python
+from risk_analytics.exposure.streaming import REGVMStepper
+
+stepper = REGVMStepper(csa, n_paths=1000)
+for t_idx, net_mtm_t in enumerate(net_mtm_steps):   # (n_paths,) slices
+    post_margin_exposure = stepper.step(net_mtm_t)
+```
+
+---
+
+## Custom Instrument Types
+
+Register new trade types for use in YAML configs with the `@TradeFactory.register`
+decorator:
+
+```python
+from risk_analytics.pipeline.config import TradeFactory
+from risk_analytics.pricing.exotic import BarrierOption
+
+@TradeFactory.register("BarrierOption")
+def _build_barrier(params):
+    return BarrierOption(
+        strike=params["strike"],
+        barrier=params["barrier"],
+        expiry=params["expiry"],
+        barrier_type=params.get("barrier_type", "down-out"),
+        option_type=params.get("option_type", "call"),
+        risk_free_rate=params.get("risk_free_rate", 0.04),
+    )
+```
+
+Then use `type: BarrierOption` in the YAML `trades` list as normal.
+
+---
+
+## Shared Memory for Parallel Workers
+
+`SimulationSharedMemory` allocates one named `SharedMemory` block per model result and
+exposes lightweight descriptors that worker processes can use to attach numpy views without
+copying data:
+
+```python
+from risk_analytics.pipeline.shared_memory import SimulationSharedMemory
+
+with SimulationSharedMemory(simulation_results) as shm:
+    desc = shm.descriptors   # picklable — safe to send to ProcessPoolExecutor
+
+    def worker(descriptors, agreement):
+        attached = SimulationSharedMemory.attach(descriptors)
+        results  = SimulationSharedMemory.results_from_attached(attached)
+        try:
+            return compute_exposure(agreement, results)
+        finally:
+            SimulationSharedMemory.detach(attached)
+
+    with ProcessPoolExecutor() as ex:
+        futures = [ex.submit(worker, desc, agr) for agr in agreements]
+```
+
+All blocks are unlinked automatically on `__exit__`.
 
 ---
 
