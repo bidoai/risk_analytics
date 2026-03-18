@@ -1,6 +1,10 @@
 # risk_analytics
 
-A Python library for Monte Carlo counterparty credit risk (CCR) and XVA analytics, with:
+A Python library for Monte Carlo counterparty credit risk (CCR) and XVA analytics.
+Designed to demonstrate production-quality architecture for simulation, pricing, margining,
+and exposure under realistic ISDA CSA dynamics.
+
+
 
 - **Correlated multi-asset simulation** — interest rates (HW1F, G2++), equity (GBM, Heston), FX (Garman-Kohlhagen), commodities (Schwartz 1F/2F)
 - **Path-dependent pricing** — barrier options, Asian options, IRS, bonds, European options
@@ -510,8 +514,8 @@ class LookbackCall(StatefulPricer):
 
 `BarrierOption` is a ready-made `StatefulPricer` for European down-and-out / up-and-out
 options. The barrier is monitored at each simulation step. For `t < expiry`, `step()`
-uses the closed-form Black-Scholes barrier formula for pre-expiry MTM (exact under GBM;
-see DESIGN.md §16), giving smooth EE/PFE profiles. At expiry, it returns the payoff if
+uses analytical Black-Scholes barrier pricing for pre-expiry MTM (see DESIGN.md §16),
+giving smooth EE/PFE profiles. At expiry, it returns the payoff if
 the barrier was never breached, otherwise zero.
 
 ```python
