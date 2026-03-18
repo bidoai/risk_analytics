@@ -42,6 +42,10 @@ class GeometricBrownianMotion(StochasticModel):
     def name(self) -> str:
         return "GBM"
 
+    @property
+    def interpolation_space(self) -> list:
+        return ["log"]
+
     def simulate(
         self,
         time_grid: np.ndarray,
@@ -78,6 +82,7 @@ class GeometricBrownianMotion(StochasticModel):
             paths=paths[:, :, np.newaxis],
             model_name=self.name,
             factor_names=["S"],
+            interpolation_space=self.interpolation_space,
         )
 
     def calibrate(self, market_data: dict) -> None:

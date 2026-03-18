@@ -64,6 +64,10 @@ class HestonModel(StochasticModel):
     def name(self) -> str:
         return "Heston"
 
+    @property
+    def interpolation_space(self) -> list:
+        return ["log", "linear"]
+
     def simulate(
         self,
         time_grid: np.ndarray,
@@ -118,6 +122,7 @@ class HestonModel(StochasticModel):
             paths=paths,
             model_name=self.name,
             factor_names=["S", "v"],
+            interpolation_space=self.interpolation_space,
         )
 
     def calibrate(self, market_data: dict) -> None:

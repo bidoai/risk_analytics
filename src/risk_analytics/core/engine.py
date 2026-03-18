@@ -103,6 +103,7 @@ class MonteCarloEngine:
             model_draws = draws[:, :, offset : offset + nf]
             logger.debug("Simulating %s (factors=%d, draw_slice=[%d:%d])", model.name, nf, offset, offset + nf)
             results[model.name] = model.simulate(time_grid, self.n_paths, model_draws)
+            results[model.name].interpolation_space = model.interpolation_space
             offset += nf
 
         logger.info("MonteCarloEngine.run complete: %d models simulated", len(results))

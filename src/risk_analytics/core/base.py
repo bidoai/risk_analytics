@@ -73,6 +73,15 @@ class StochasticModel(ABC):
         """Model identifier string."""
         ...
 
+    @property
+    def interpolation_space(self) -> list:
+        """
+        Interpolation space per factor for sparse-grid path interpolation.
+        "log" for log-normally distributed quantities (spots, FX rates).
+        "linear" for Gaussian quantities (rates, log-spot processes).
+        """
+        return ["linear"] * self.n_factors
+
     # ------------------------------------------------------------------
     # Serialisation
     # ------------------------------------------------------------------
@@ -169,3 +178,13 @@ class Pricer(ABC):
             Mark-to-market value at each time point for each path.
         """
         ...
+
+    def cashflow_times(self) -> list:
+        """
+        Return the list of known cashflow/payment times (in years).
+        Used by the pipeline to augment the sparse simulation grid with
+        hard nodes at each payment date, preventing interpolation across
+        discontinuities in MTM.
+        Override in subclasses for instruments with scheduled payments.
+        """
+        return []

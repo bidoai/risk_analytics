@@ -50,6 +50,10 @@ class Schwartz1F(StochasticModel):
     def name(self) -> str:
         return "Schwartz1F"
 
+    @property
+    def interpolation_space(self) -> list:
+        return ["linear"]
+
     def simulate(
         self,
         time_grid: np.ndarray,
@@ -98,6 +102,7 @@ class Schwartz1F(StochasticModel):
             paths=paths,
             model_name=self.name,
             factor_names=["S"],
+            interpolation_space=self.interpolation_space,
         )
 
     def calibrate(self, market_data: dict) -> None:
