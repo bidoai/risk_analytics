@@ -3,13 +3,29 @@ name = "risk-analytics"
 version = "1.0.0"
 description = "Monte Carlo XVA library for counterparty credit risk analytics"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.12"
+keywords = ["quantitative finance", "counterparty credit risk", "CVA", "XVA", "Monte Carlo", "ISDA"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Typing :: Typed",
+]
 dependencies = [
     "numpy>=2.4.3",
     "pandas>=3.0.1",
     "scipy>=1.17.1",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/robert/risk-analytics"
+Changelog = "https://github.com/robert/risk-analytics/blob/main/CHANGELOG.md"
 
 [project.scripts]
 risk-analytics-demo = "risk_analytics.demo:main"

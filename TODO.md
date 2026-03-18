@@ -46,7 +46,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   A proper implementation replays the CSB from the last successful margin call at
   `t - mpor`, matching the Basel SA-CCR / FRTB definition.
 
-- [ ] **[P2] `REGVMStepper` rounding convention.**
+- [x] **[P2] `REGVMStepper` rounding convention.**
   The current implementation rounds to the nearest multiple.  ISDA 2016 VM CSA specifies
   that delivery amounts round *up* and return amounts round *down*.  Fix the rounding
   branches accordingly.
