@@ -207,3 +207,79 @@ class TestREGVMStepperProperties:
         stepper = REGVMStepper(csa, n_paths=50)
         expected_floor = ia_cpty - ia_party
         np.testing.assert_allclose(stepper.csb, expected_floor, atol=1e-12)
+
+
+# ---------------------------------------------------------------------------
+# Streaming vs batch EE parity
+# ---------------------------------------------------------------------------
+
+def test_streaming_batch_ee_parity():
+    """StreamingExposureEngine and ISDAExposureCalculator must produce the same
+    EE profile for a plain vanilla swap using a high threshold (no VM), ensuring
+    both compute the raw uncollateralised E[max(V,0)] profile.
+
+    Tolerance: 1bp (0.0001) on a unit-notional basis.
+    """
+    from risk_analytics.core.engine import MonteCarloEngine
+    from risk_analytics.core.grid import TimeGrid
+    from risk_analytics.models.rates.hull_white import HullWhite1F
+    from risk_analytics.pricing.rates.swap import InterestRateSwap
+    from risk_analytics.exposure.netting import NettingSet
+    from risk_analytics.exposure.bilateral import ISDAExposureCalculator
+    from risk_analytics.exposure.csa import CSATerms, MarginRegime, IMModel
+    from risk_analytics.portfolio.trade import Trade
+
+    N_PATHS = 3000
+    SEED = 42
+
+    model = HullWhite1F(a=0.10, sigma=0.01, r0=0.05)
+    grid = TimeGrid.uniform(5.0, 60)
+    engine = MonteCarloEngine(N_PATHS, seed=SEED)
+    results = engine.run([model], grid)
+
+    swap = InterestRateSwap(fixed_rate=0.05, maturity=5.0, notional=1.0, payer=True)
+
+    # Use a very high threshold so no VM is ever called.
+    # Both engines will therefore compute raw EE = E[max(V, 0)].
+    HIGH_TH = 1e12
+    csa = CSATerms(
+        counterparty_id="cp",
+        margin_regime=MarginRegime.REGVM,
+        threshold_party=HIGH_TH,
+        threshold_counterparty=HIGH_TH,
+        mta_party=0.0,
+        mta_counterparty=0.0,
+        im_model=IMModel.SCHEDULE,
+        mpor=0.0,
+    )
+
+    # --- Batch path (ISDAExposureCalculator) ---
+    ns_batch = NettingSet("test")
+    ns_batch.add_trade(Trade(id="swap", pricer=swap, model_name="HullWhite1F"))
+
+    isda = ISDAExposureCalculator(netting_set=ns_batch, csa=csa)
+    batch_out = isda.run(results, grid)
+    ee_batch = batch_out["ee"]  # raw E[max(V,0)]
+
+    # --- Streaming path ---
+    stream_csa = CSATerms(
+        counterparty_id="cp",
+        margin_regime=MarginRegime.REGVM,
+        threshold_party=HIGH_TH,
+        threshold_counterparty=HIGH_TH,
+        mta_party=0.0,
+        mta_counterparty=0.0,
+        im_model=IMModel.SCHEDULE,
+        mpor=0.0,
+    )
+    # StreamingExposureEngine takes (trade_id, pricer) tuples and a single SimulationResult
+    trades = [("swap", swap)]
+    streaming = StreamingExposureEngine(trades, stream_csa, confidence=0.95)
+    stream_out = streaming.run(results["HullWhite1F"])
+    ee_stream = stream_out.ee_profile  # post-VM EE ≈ raw EE when threshold=∞
+
+    # Should match within 1bp on unit-notional basis
+    np.testing.assert_allclose(
+        ee_batch, ee_stream, atol=1e-4,
+        err_msg="Streaming and batch EE profiles diverge by more than 1bp",
+    )

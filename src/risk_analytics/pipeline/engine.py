@@ -215,27 +215,48 @@ class _AggregateNettingSet:
 
 
 def _run_parallel(agreements, simulation_results, time_grid, confidence, write_raw, config):
-    """Run exposure computation in parallel using ProcessPoolExecutor."""
+    """Run exposure computation in parallel using ProcessPoolExecutor.
+
+    Uses SimulationSharedMemory to share simulation paths across worker processes
+    via OS shared memory, avoiding O(workers × data) memory duplication from pickling.
+    """
+    from risk_analytics.pipeline.shared_memory import SimulationSharedMemory
+    from uuid import uuid4
+
+    shm_name = f"ra_{os.getpid()}_{uuid4().hex[:8]}"
     max_workers = min(len(agreements), os.cpu_count() or 1)
     agr_results = {}
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(
-                _compute_agreement_result,
-                agr, simulation_results, time_grid, confidence, write_raw, config
-            ): agr.id
-            for agr in agreements
-        }
-        for future in as_completed(futures):
-            agr_id = futures[future]
-            try:
-                agr_results[agr_id] = future.result()
-            except Exception as exc:
-                logger.error("Agreement %s raised an exception: %s", agr_id, exc)
-                raise
+    with SimulationSharedMemory(simulation_results) as shm:
+        descriptors = shm.descriptors
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(
+                    _compute_agreement_result_shm,
+                    agr, descriptors, time_grid, confidence, write_raw, config
+                ): agr.id
+                for agr in agreements
+            }
+            for future in as_completed(futures):
+                agr_id = futures[future]
+                try:
+                    agr_results[agr_id] = future.result()
+                except Exception as exc:
+                    logger.error("Agreement %s raised an exception: %s", agr_id, exc)
+                    raise
 
     return agr_results
+
+
+def _compute_agreement_result_shm(agreement, descriptors, time_grid, confidence, write_raw, config):
+    """Worker function that attaches to shared memory and computes agreement exposure."""
+    from risk_analytics.pipeline.shared_memory import SimulationSharedMemory
+    attached = SimulationSharedMemory.attach(descriptors)
+    try:
+        sim_results = SimulationSharedMemory.results_from_attached(attached)
+        return _compute_agreement_result(agreement, sim_results, time_grid, confidence, write_raw, config)
+    finally:
+        SimulationSharedMemory.detach(attached)
 
 
 def _compute_agreement_result(
@@ -316,6 +337,7 @@ def _compute_agreement_result(
 def _build_models(config: EngineConfig, market_data: MarketData, time_grid: np.ndarray):
     """Instantiate and optionally calibrate all models. Returns (models_list, names_list)."""
     from risk_analytics.models.rates.hull_white import HullWhite1F
+    from risk_analytics.models.rates.hull_white2f import HullWhite2F
     from risk_analytics.models.equity.gbm import GeometricBrownianMotion
     from risk_analytics.models.equity.heston import HestonModel
     from risk_analytics.models.commodity.schwartz1f import Schwartz1F
@@ -324,6 +346,7 @@ def _build_models(config: EngineConfig, market_data: MarketData, time_grid: np.n
 
     MODEL_REGISTRY = {
         "HullWhite1F": HullWhite1F,
+        "HullWhite2F": HullWhite2F,
         "GBM": GeometricBrownianMotion,
         "GeometricBrownianMotion": GeometricBrownianMotion,
         "HestonModel": HestonModel,
@@ -341,20 +364,19 @@ def _build_models(config: EngineConfig, market_data: MarketData, time_grid: np.n
         model = model_cls(**m_cfg.params)
 
         if m_cfg.calibrate_to:
-            if m_cfg.calibrate_to in market_data.curves:
-                curve = market_data.curves[m_cfg.calibrate_to]
-                calib_data = {
-                    "tenors": list(curve.tenors),
-                    "zero_rates": list(curve.zero_rates),
-                    "time_grid": time_grid,
-                }
-                model.calibrate(calib_data)
-                logger.info("Calibrated %s to curve '%s'", m_cfg.name, m_cfg.calibrate_to)
-            else:
-                logger.warning(
-                    "calibrate_to curve '%s' not found in MarketData; skipping calibration.",
-                    m_cfg.calibrate_to,
+            if m_cfg.calibrate_to not in market_data.curves:
+                raise ValueError(
+                    f"Model '{m_cfg.name}': calibrate_to curve '{m_cfg.calibrate_to}' "
+                    f"not found in MarketData. Available curves: {list(market_data.curves)}"
                 )
+            curve = market_data.curves[m_cfg.calibrate_to]
+            calib_data = {
+                "tenors": list(curve.tenors),
+                "zero_rates": list(curve.zero_rates),
+                "time_grid": time_grid,
+            }
+            model.calibrate(calib_data)
+            logger.info("Calibrated %s to curve '%s'", m_cfg.name, m_cfg.calibrate_to)
 
         # Wrap model so MonteCarloEngine keys results by user-defined name
         wrapped = _ModelWrapper(model, m_cfg.name)

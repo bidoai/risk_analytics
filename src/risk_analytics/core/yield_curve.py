@@ -255,8 +255,8 @@ class YieldCurve:
 
     def __repr__(self) -> str:
         return (
-            f"YieldCurve(tenors={self._t.tolist()}, "
-            f"zero_rates={self._z.tolist()}, "
+            f"YieldCurve(tenors={self.tenors.tolist()}, "
+            f"zero_rates={self.zero_rates.tolist()}, "
             f"interpolation='{self.interpolation.value}')"
         )
 

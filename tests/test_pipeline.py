@@ -275,21 +275,9 @@ def test_engine_config_from_yaml(tmp_path):
 def test_barrier_option_e2e():
     """Full pipeline handles a path-dependent StatefulPricer correctly.
 
-    Registers BarrierOption via TradeFactory.register(), runs RiskEngine,
-    and asserts that EE/CVA profiles are well-formed.
+    BarrierOption is auto-registered on import; runs RiskEngine and asserts
+    that EE/CVA profiles are well-formed.
     """
-    from risk_analytics.pricing.exotic.barrier_option import BarrierOption
-
-    @TradeFactory.register("BarrierOption")
-    def _build_barrier(params):
-        return BarrierOption(
-            strike=params["strike"],
-            barrier=params["barrier"],
-            expiry=params["expiry"],
-            barrier_type=params.get("barrier_type", "down-out"),
-            risk_free_rate=params.get("risk_free_rate", 0.04),
-        )
-
     config = {
         "simulation": {
             "n_paths": 300,
@@ -333,19 +321,56 @@ def test_barrier_option_e2e():
         "outputs": {"confidence": 0.95, "write_raw_paths": False},
     }
 
-    try:
-        engine = RiskEngine(config)
-        result = engine.run()
+    engine = RiskEngine(config)
+    result = engine.run()
 
-        assert "AGR_BARRIER" in result.agreement_results
-        agr = result.agreement_results["AGR_BARRIER"]
-        T = len(result.time_grid)
+    assert "AGR_BARRIER" in result.agreement_results
+    agr = result.agreement_results["AGR_BARRIER"]
+    T = len(result.time_grid)
 
-        assert agr.ee_profile.shape == (T,)
-        assert agr.pfe_profile.shape == (T,)
-        assert np.all(agr.ee_profile >= -1e-10)
-        assert np.isfinite(agr.cva)
-        assert np.isfinite(agr.dva)
-        assert agr.cva >= 0.0
-    finally:
-        TradeFactory._CUSTOM_REGISTRY.pop("BarrierOption", None)
+    assert agr.ee_profile.shape == (T,)
+    assert agr.pfe_profile.shape == (T,)
+    assert np.all(agr.ee_profile >= -1e-10)
+    assert np.isfinite(agr.cva)
+    assert np.isfinite(agr.dva)
+    assert agr.cva >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Test 15: calibrate_to missing curve raises ValueError
+# ---------------------------------------------------------------------------
+
+def test_calibrate_to_missing_curve_raises():
+    """_build_models() must raise ValueError when calibrate_to references a curve
+    not present in MarketData — not silently continue with an uncalibrated model."""
+    config = {
+        "simulation": {"n_paths": 100, "seed": 1, "time_grid": {"type": "standard"}},
+        "market_data": {
+            "curves": {
+                "USD_OIS": {
+                    "tenors": [0.5, 1.0, 2.0, 5.0],
+                    "rates": [0.04, 0.042, 0.044, 0.047],
+                }
+            }
+        },
+        "models": [
+            {
+                "name": "rates_usd",
+                "type": "HullWhite1F",
+                "params": {"a": 0.15, "sigma": 0.01, "r0": 0.04},
+                "calibrate_to": "NONEXISTENT_CURVE",  # not in market_data
+            }
+        ],
+        "agreements": [
+            {
+                "id": "AGR_X",
+                "counterparty": "CP_X",
+                "csa": {"mta": 0, "threshold": 0, "margin_regime": "REGVM"},
+                "netting_sets": [],
+            }
+        ],
+        "outputs": {"confidence": 0.95, "write_raw_paths": False},
+    }
+    engine = RiskEngine(config)
+    with pytest.raises(ValueError, match="NONEXISTENT_CURVE"):
+        engine.run()

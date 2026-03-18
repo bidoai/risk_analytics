@@ -1,7 +1,7 @@
 [project]
 name = "risk-analytics"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.0.0"
+description = "Monte Carlo XVA library for counterparty credit risk analytics"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

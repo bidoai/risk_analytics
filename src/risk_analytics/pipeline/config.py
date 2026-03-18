@@ -288,3 +288,42 @@ class TradeFactory:
                 f"Built-in and registered types: {known}. "
                 f"Use @TradeFactory.register('{t}') to add custom types."
             )
+
+
+def _register_builtin_trades():
+    """Auto-register built-in exotic pricers so they work in YAML configs without
+    manual @TradeFactory.register() calls."""
+    try:
+        from risk_analytics.pricing.exotic.barrier_option import BarrierOption
+
+        if "BarrierOption" not in TradeFactory._CUSTOM_REGISTRY:
+            @TradeFactory.register("BarrierOption")
+            def _build_barrier(params):
+                return BarrierOption(
+                    strike=params["strike"],
+                    barrier=params["barrier"],
+                    expiry=params["expiry"],
+                    barrier_type=params.get("barrier_type", "down-out"),
+                    sigma=params.get("sigma", 0.20),
+                    risk_free_rate=params.get("risk_free_rate", 0.0),
+                    option_type=params.get("option_type", "call"),
+                )
+    except ImportError:
+        pass
+
+    try:
+        from risk_analytics.pricing.exotic.asian_option import AsianOption
+
+        if "AsianOption" not in TradeFactory._CUSTOM_REGISTRY:
+            @TradeFactory.register("AsianOption")
+            def _build_asian(params):
+                return AsianOption(
+                    strike=params["strike"],
+                    expiry=params["expiry"],
+                    risk_free_rate=params.get("risk_free_rate", 0.0),
+                )
+    except ImportError:
+        pass
+
+
+_register_builtin_trades()

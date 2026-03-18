@@ -7,7 +7,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
 
 ## Pipeline
 
-- [ ] **[P1] Wire `SimulationSharedMemory` into `RiskEngine` parallel path.**
+- [x] **[P1] Wire `SimulationSharedMemory` into `RiskEngine` parallel path.**
   `_run_parallel()` currently pickles the full `simulation_results` dict into each
   worker process.  Replace with `SimulationSharedMemory` to avoid the O(workers × data)
   memory blow-up described in DESIGN.md §9.
@@ -27,7 +27,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   incompatible model "succeeds" by accident.  `Trade.model_name` should be used to look
   up the right `SimulationResult` directly (see netting set improvement below).
 
-- [ ] **[P3] `TradeFactory`: auto-register `BarrierOption` and other built-in exotics.**
+- [x] **[P3] `TradeFactory`: auto-register `BarrierOption` and other built-in exotics.**
   Users currently have to call `@TradeFactory.register("BarrierOption")` manually.
   The built-in exotic pricers should be registered by default on import.
 
@@ -65,12 +65,12 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   An efficient override computing only the `(n_paths,)` Black-Scholes MTM from the spot
   slice would be consistent with the IRS/bond overrides.
 
-- [ ] **[P2] `BarrierOption` pre-expiry MTM.**
+- [x] **[P2] `BarrierOption` pre-expiry MTM.**
   Currently `step()` returns 0 for `t < expiry`.  A more useful implementation would
   return the Black-Scholes barrier option price at `t` (analytical formula exists),
   making the MTM profile smooth and usable for EE/PFE pre-expiry.
 
-- [ ] **[P3] Asian option pricer.**
+- [x] **[P3] Asian option pricer.**
   Good second example of `StatefulPricer` (state = running arithmetic average).
   Payoff = `max(avg(S) - K, 0)` at expiry; interim MTM via Monte Carlo sub-simulation
   or control-variate approximation.
@@ -84,7 +84,7 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   and can approach zero), while the spot `S` should be log-space.  Confirm this is
   correctly declared and tested.
 
-- [ ] **[P3] Multi-curve Hull-White (HullWhite2F).**
+- [x] **[P3] Multi-curve Hull-White (HullWhite2F).**
   Second mean-reverting factor captures a richer term structure of interest rate
   volatility.  Useful for swaption calibration and longer-dated exposure.
 
@@ -121,11 +121,11 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
   ZCB prices computed via the affine formula should match the closed-form
   `P(0,T) * exp(B*f(0,t) - ...)` expression to machine precision.
 
-- [ ] **[P3] Benchmark: streaming vs batch EE profiles match to <1bp.**
+- [x] **[P3] Benchmark: streaming vs batch EE profiles match to <1bp.**
   `StreamingExposureEngine` and `ISDAExposureCalculator` should produce identical (up to
   float precision) EE profiles for plain vanilla swaps with zero threshold/MTA.
 
-- [ ] **[P2] `calibrate_to` missing curve should raise, not warn.**
+- [x] **[P2] `calibrate_to` missing curve should raise, not warn.**
   When a model config's `calibrate_to` key references a curve not present in
   `MarketData`, `pipeline/engine.py` logs a warning and continues with an uncalibrated
   model. An uncalibrated Hull-White model produces systematically wrong CVA/EE profiles.
@@ -136,10 +136,10 @@ Items are grouped by area; priority labels: `[P1]` urgent / `[P2]` important / `
 
 ## Documentation / DX
 
-- [ ] **[P3] Example YAML configs in `examples/`.**
+- [x] **[P3] Example YAML configs in `examples/`.**
   Ship a `single_swap.yaml`, `multi_asset.yaml`, and `stress_test.yaml` that users can
   run immediately with `uv run risk-analytics-demo`.
 
-- [ ] **[P3] Changelog (`CHANGELOG.md`).**
+- [x] **[P3] Changelog (`CHANGELOG.md`).**
   Track breaking changes and notable additions per version so library consumers know
   what to expect on upgrade.

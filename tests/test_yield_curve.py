@@ -59,6 +59,14 @@ class TestConstruction:
         c = YieldCurve(TENORS, ZERO_RATES, "linear")
         assert "linear" in repr(c)
 
+    def test_tenors_property_returns_input_array(self):
+        c = YieldCurve(TENORS, ZERO_RATES)
+        np.testing.assert_array_equal(c.tenors, TENORS)
+
+    def test_zero_rates_property_returns_input_array(self):
+        c = YieldCurve(TENORS, ZERO_RATES)
+        np.testing.assert_array_equal(c.zero_rates, ZERO_RATES)
+
 
 # ---------------------------------------------------------------------------
 # zero_rate
