@@ -23,6 +23,9 @@
 15. [Internal Transfer Pricing](#15-internal-transfer-pricing)
 16. [Technology and Quant Infrastructure](#16-technology-and-quant-infrastructure)
 17. [Open Debates and Unsolved Problems](#17-open-debates-and-unsolved-problems)
+18. [When a Counterparty Actually Defaults](#18-when-a-counterparty-actually-defaults)
+19. [The Proxy Curve Problem in Practice](#19-the-proxy-curve-problem-in-practice)
+20. [Active XVA Portfolio Management](#20-active-xva-portfolio-management)
 
 ---
 
@@ -264,6 +267,22 @@ The main risk dimensions of CVA:
 **Specific WWR**: Strong structural link. Example: the counterparty has sold you a put on their own stock. If they default, their stock is likely at zero — the put is deep in the money exactly when they default.
 
 ISDA's alpha multiplier (1.4× applied to EAD in IMM models) is partly a regulatory penalty for not modelling WWR correctly.
+
+### Concentration Risk and Jump-to-Default
+
+Single-name concentration in the CVA book creates a fundamentally different risk from the spread-move risk that CDS hedges address. If 20–30% of your total CVA reserve sits against one counterparty, a sudden default — before you can hedge — generates a lumpy, unhedgeable P&L loss.
+
+**Why concentration happens**: Large dealers have large relationships. A major corporate treasury counterparty might generate £15m of CVA on a book of cross-currency swaps and long-dated IR hedges. That single name can easily dwarf the aggregate CVA against 200 smaller clients.
+
+**Jump-to-default (JTD)**: The CDS hedge protects against spread widening but only partially against sudden default. If a counterparty defaults with spreads at 80bps (nobody saw it coming — think Enron, Wirecard), the CDS position has a market value near zero and the CVA reserve was calibrated to an 80bps hazard rate — far too low. The actual loss is LGD × EE, unhedged.
+
+**The concentration reserve**: Sophisticated desks add a separate reserve on top of CVA for single-name concentration, typically computed as:
+```
+Concentration reserve = EE_top_N × LGD × stress_multiplier
+```
+where `stress_multiplier` (typically 2–5×) reflects the probability that a name defaults at a spread level inconsistent with the current CDS curve. This reserve is a management overlay, not part of the formal CVA model.
+
+**The practical limit**: Concentration reserves consume capital and reduce desk P&L. There is constant pressure to keep them small. The resolution is usually a concentration limit — e.g., no single counterparty's CVA can exceed 15% of total CVA without board approval — rather than a formal pricing model.
 
 ### IFRS 13 and Fair Value CVA
 
@@ -582,6 +601,33 @@ Incremental pricing is highly non-linear: a trade that offsets existing exposure
 
 A fully-hedged CVA book should have near-zero P&L from spread moves. An unhedged book has large CS01 exposure.
 
+### CVA P&L Explanation — The Politics Problem
+
+One of the most underappreciated skills of an XVA desk head is translating CVA P&L into language that finance controllers, senior management, and regulators can act on.
+
+**The scenario**: CVA moves £50m in a week because Italian sovereign spreads widened 30bps and the book has significant exposure to Italian banks. Nobody defaulted. No trade was executed. The CFO fields a call from the CEO asking why derivatives P&L is down £50m. The technically correct explanation — "mark-to-market of our counterparty credit risk on a portfolio of IRS hedges" — is precise and politically useless.
+
+**The "clean P&L" illusion**: Trading desks report clean P&L net of XVA charges. But the XVA charges themselves are volatile. A trader who executed a 10yr IRS in January at a CVA charge of £100k may find the trade's XVA allocation has risen to £150k by March due to spread widening — even though they haven't traded. This creates cross-desk P&L disputes and accusations that the XVA desk is moving the goalposts.
+
+**Month-end cliff effects**: CVA is repriced daily for booking purposes but reported at month-end. If month-end falls on a day when CDS spreads are wide, the CVA reserve increases and the P&L takes a hit. The following month-end, spreads narrow and it reverses. The volatility is real but the timing is arbitrary. Finance teams struggle to distinguish genuine credit deterioration from month-end noise.
+
+**Single-name concentration**: If the book has 20% concentration in one name, a 50bp spread move on that name moves total CVA by more than the rest of the book combined. Management wants to know why you have £20m CVA against a single counterparty. The answer — "they are our largest rates counterparty and the netting benefit alone saves us £150m in capital" — takes 20 minutes to explain properly and rarely survives the journey to the board pack.
+
+### The CSA Negotiation Workflow
+
+The XVA desk has a strong economic interest in CSA terms but is usually the last to be consulted. The commercial relationship sits with sales and coverage; legal handles documentation. XVA typically gets consulted after terms are drafted — often too late to change material parameters.
+
+**The onboarding delay**: Before the first trade, legal and credit negotiate the ISDA master and CSA. For a new counterparty this takes weeks to months. During this time, the XVA desk prices pre-trade XVA on a hypothetical CSA. The final documentation often arrives with changes (threshold revised, rounding added, a different collateral currency) requiring repricing — sometimes after the trade has already been agreed commercially.
+
+**Stuck in legacy**: Many counterparties executed their ISDA agreements in the 1990s. A legacy CSA might carry a threshold of £10m, weekly margining, and eligible collateral including government bonds in any G10 currency. Upgrading to a 2016 VM CSA would eliminate the threshold, switch to daily cash-only margining, and increase their margin obligations substantially. They have no incentive to agree. The bank is left holding legacy exposure generating 3–5× the CVA of an equivalent modern CSA — indefinitely.
+
+**ISDA Protocol adherence as leverage**: For the 2016 VM transition, ISDA published the March 2017 Protocol allowing bilateral adherence. Large buy-side clients — hedge funds, asset managers — used adherence as a negotiating chip: "we will adhere if you improve our prime brokerage terms / reduce our IM haircuts / extend our credit line." Dealers with weaker commercial relationships were last to get adherence and longest exposed to legacy CSA terms.
+
+**The XVA desk's actual levers**: In practice, the desk's best tools for CSA improvement are:
+- Offering a better all-in price on new trades in exchange for CSA tightening (quantify the CVA saving, share part of it as a price concession)
+- Flagging legacy counterparties with outsized CVA to credit risk management as concentration risks requiring remediation
+- Building CSA sensitivity into the incremental XVA charge so trading desks are commercially incentivised to push for better terms
+
 ---
 
 ## 13. Hedging XVA
@@ -812,6 +858,34 @@ The XVA model stack has multiple layers, each with model risk:
 
 Model risk reserves for XVA are large — typically 10–30% of CVA mark as additional reserve, reflecting uncertainty in EE models and hazard curves.
 
+### Backtesting XVA Models
+
+Backtesting is a regulatory requirement for IMM-approved banks and a key model validation discipline regardless of approval status.
+
+**EEPE backtesting**: Basel requires periodic backtesting of the EEPE model against actual observed exposures. The test compares simulated EE profiles with realised portfolio MtM evolution on mature portfolios. Typical findings:
+- Models *over-estimate* EE for fully-collateralised netting sets — MPOR conservatism and MTA assumptions create cushion above realised gap exposure
+- Models *under-estimate* EE for uncollateralised portfolios — market moves in the tails exceed model volatility calibrated to recent history
+
+The standard backtest horizon is 1 year on portfolios that are at least 1 year old (so you can compare model EE at inception to actual realised MtM).
+
+**CVA backtesting**: Harder, because CVA combines two uncertain models. The decomposition:
+1. *Was the EE model right?* Compare simulated EE profiles against actual MtM time series — tractable given path data
+2. *Were the hazard rates right?* Compare market-implied PDs to actual default frequencies over the horizon — confounded by credit risk premium (market PDs are always higher than actuarial PDs, by design)
+
+In practice, CVA backtesting focuses on (1) and accepts that (2) has an irreducible premium component. The regulatory concern is whether the CVA model is systematically directionally wrong, not whether it captures the risk premium correctly.
+
+**The regulatory sting**: Failed backtests (actual losses consistently exceed CVA reserves on specific portfolios) can trigger capital add-ons or mandatory model overhaul. This creates incentives to over-reserve, which conflicts directly with trading desks' incentive to minimise XVA charges. The tension never fully resolves.
+
+### The Internal Funding Rate and Treasury
+
+The IFR is set by treasury via the bank's funds transfer pricing (FTP) framework. In practice this relationship is one of the most politically charged in the bank and directly determines whether the XVA desk is a profit centre or a cost centre.
+
+**The structural carry trade**: If treasury sets the IFR at SOFR + 80bps but the bank actually funds at SOFR + 60bps in the wholesale market, the XVA desk charges clients 80bps of FVA but only passes 60bps to treasury. The 20bp differential is a structural P&L on the XVA desk. Whether it belongs to the XVA desk or treasury is a permanent source of conflict and is resolved differently at every firm.
+
+**The tenor mismatch**: Most IFR curves are published as a single flat spread (e.g., "SOFR + 60bps regardless of tenor"). In reality, funding spreads are upward-sloping — it is harder and more expensive to borrow at 10 years than at 3 months. Using a flat IFR undercharges FVA on long-dated uncollateralised trades and overcharges short-dated ones. Sophisticated desks push for tenor-structured IFR curves; treasury resists the complexity.
+
+**Currency IFR**: Multi-currency books need currency-specific IFR curves. USD, EUR, GBP, and JPY unsecured funding spreads diverge materially due to cross-currency basis. Using a single "OIS + flat spread" for all currencies is a genuine model error on cross-currency swaps, which can have notional exchange at maturity worth hundreds of millions. This is often ignored and sits quietly as a funding model risk in the XVA P&L.
+
 ---
 
 ## 17. Open Debates and Unsolved Problems
@@ -841,6 +915,155 @@ The "cleared XVA is lower" narrative is often true for vanilla products but wron
 ### 6. XVA Under Stress
 
 Standard XVA models use market-implied, risk-neutral hazard rates calibrated to current CDS spreads. In a systemic credit event (2008-style), CDS spreads blow out, CVA P&L losses are massive, and hedge ratios (CS01) were underestimated because the model assumed smaller spread moves. Stress-testing XVA — using historical scenarios (2008, 2011 Eurozone, 2020 COVID) — is still not standardised. Firms have internal stress CVA reserves but the calculation methodology varies widely.
+
+### 7. The CVA Pro-Cyclicality Feedback Loop
+
+Standard XVA models use risk-neutral hazard rates calibrated to current CDS spreads. This creates a systemic feedback mechanism that becomes dangerous in credit stress events.
+
+The sequence: CDS spreads widen across financial names → banks' CVA reserves must increase (P&L loss) → banks are forced to hedge by buying CDS protection to reduce CS01 exposure → hedging demand pushes CDS spreads wider → more CVA reserve increases required. The loop is self-reinforcing. It is structurally identical to the dynamic hedging spirals seen in equity vol markets but operating through the credit derivative market.
+
+The 2011 Eurozone sovereign crisis had clear evidence of this: iTraxx financial sector spreads were partially driven by dealer CVA hedging flows, particularly as Italian and Spanish bank exposures crystallised on rates books with asymmetric collateral terms.
+
+**The regulatory response**: SA-CVA creates capital for CVA volatility risk, introducing a capital-based disincentive for rapid de-risking. An unhedged CVA book pays CVA capital under SA-CVA, but the capital doesn't spike discontinuously in a spread event the way P&L-driven hedging does. The intended effect is to reduce the urgency of mark-to-market-driven hedging. Whether it works in a genuine systemic stress event remains untested under the post-FRTB framework.
+
+---
+
+## 18. When a Counterparty Actually Defaults
+
+This is the section the document needs most. Every formula in sections 5–11 is ultimately tested by what happens when a counterparty goes into administration. The model treats default as a statistical event; the desk experiences it as an operational and legal crisis lasting 6–18 months.
+
+### The Operational Sequence
+
+**Day 0 — Credit event**: The bank's credit desk identifies the default. Sources: public announcement, ISDA credit event determination request, failure-to-pay on a margin call, bankruptcy filing. The XVA desk is notified immediately. You halt accepting margin calls from the defaulting entity. Any VM received in the last ~90 days may be subject to preference clawback rules in some jurisdictions — legal reviews this immediately.
+
+**Days 1–5 — Early Termination Notice**: The surviving party (you) serves an Early Termination Notice on the defaulted counterparty's administrator, specifying the Early Termination Date. Until this is served, you are in legal limbo — the trades are neither live nor terminated. The ISDA Master Agreement governs the process; the administrator will appoint derivatives counsel to scrutinize every step.
+
+**The Valuation Date**: You must determine the "Close-out Amount" for every trade in the netting set. Under ISDA 2002, this is what a "Replacement Transaction" would cost — the market price to enter an equivalent trade with a third party, including your own bid-ask costs. This sounds straightforward. It is not.
+
+- You must value potentially thousands of trades, some exotic, some with disputed terms
+- The correct discount rate for close-out is contested (RFC vs CPC — does your own credit enter the close-out value? The estate will argue it should if it reduces what they owe you)
+- Market liquidity at the time of close-out may be impaired, making "market price" ambiguous
+- For structured products, there may be no observable market; you use a model, which the estate will challenge
+
+**The Dispute Phase**: The administrator will almost always dispute your close-out number. On large portfolios (thousands of trades, mixed products), disputes routinely run 2–4 years. Lehman derivatives disputes were still resolving in 2016, eight years after the default. During this time:
+- Your CVA reserve must cover the disputed amount
+- You cannot recycle the capital consumed by the exposure
+- Legal and quant resources are consumed defending the valuation methodology
+
+**Proof of Claim**: You file the net close-out amount as a creditor claim with the administrator. You receive recovery as a fraction of that amount. This recovery is the LGD complement — and it is determined by the liquidation process, not your model's 40% recovery rate assumption.
+
+### Actual vs Modelled Recovery
+
+The academic LGD for senior unsecured bank debt is typically 40–55%. Derivatives are unsecured creditors in bankruptcy. Reality is messier:
+
+- **Lehman Brothers**: Dealer recoveries on derivatives positions ranged from approximately 20 to 40 cents on the dollar, depending heavily on close-out speed, portfolio complexity, and jurisdiction. Banks with automated close-out procedures and simpler portfolios recovered materially more.
+- **Jurisdiction matters enormously**: UK administration (Lehman Brothers International Europe) and US Chapter 11 (LBHI) produced different recovery timelines and amounts for nominally similar positions.
+- **Complexity tax**: Complex structured products took longer to close, required more expert valuation resource, and generated larger disputes. The CVA model treats a structured note and a vanilla swap as equivalent exposure; the recovery process does not.
+
+### What the CVA Reserve Actually Covers
+
+A well-run CVA reserve is not just the expected loss. It is the present value of the cost of going through the process described above:
+- Expected loss: LGD × EE × PD
+- Legal and operational cost: not modelled, but material (6–12 months of specialist resource)
+- Opportunity cost of locked capital during dispute: not modelled
+- Model uncertainty in close-out valuation: partially captured in model risk reserve
+
+The firms that came through 2008 best had CVA reserves calibrated to realistic recovery timelines, not just textbook LGD numbers.
+
+---
+
+## 19. The Proxy Curve Problem in Practice
+
+Section 5 treats proxy curves as a solved problem. They are not. The proxy curve construction methodology is one of the most impactful and least-standardised components of CVA, and it materially affects both reserve levels and P&L volatility.
+
+### The Scale of the Problem
+
+At a large dealer, ~10% of counterparties have liquid single-name CDS. The remaining 90% need proxy curves. For a regional bank, this proportion may be 95%+. Every counterparty without a liquid CDS gets a curve constructed from other data — and the methodology choices cascade through the entire CVA book.
+
+### The Proxy Hierarchy
+
+From most to least accurate:
+
+| Level | Method | Coverage | Typical error |
+|---|---|---|---|
+| 1 | Same-entity liquid CDS | ~10% of names | <5bps (market) |
+| 2 | Parent entity CDS | ~5% (subsidiaries) | 10–30bps (basis risk) |
+| 3 | Sector/rating index curve | ~30% | 30–80bps |
+| 4 | Country + sector overlay | ~20% | 50–150bps |
+| 5 | Internal credit model → spread | ~25% | 100–300bps |
+| 6 | Rating bucket flat spread | ~10% | 200bps+ |
+
+**Level 3 in practice**: Take the iTraxx Non-Financials 5yr spread, decompose by sector and rating sub-index. A BBB-rated European utility company gets the iTraxx BBB utility component. The calibration of which sub-index to use, and how to adjust for maturity, is a model choice that moves CVA by 20–50bps for long-dated trades.
+
+**Level 5 — internal credit model**: The bank's credit risk management group assigns internal ratings (equivalent to S&P/Moody's scale). These are mapped to a term-structure of spreads using a calibration to historical default rates adjusted by a market risk premium. The risk premium calibration is itself a model — applying a PD term structure to a spread level requires assumptions about the market price of credit risk.
+
+### The Systematic Biases
+
+**Calm market underestimation**: In benign credit environments, CDS indices are compressed and smooth. Proxy curves based on index levels assign low spreads to names that may have idiosyncratic risks not reflected in the index. CVA reserves are structurally understated for these names.
+
+**Stress market overestimation**: When CDS indices blow out (2008, 2011, 2020), proxy curves widen for all names — including those with no fundamental deterioration. CVA reserves spike on portfolios full of proxy-curve counterparties, even if none of those counterparties are under any real stress. This creates P&L volatility that is a pure data artifact, not an economic signal.
+
+**The stale data problem**: Single CDS trades are sparse for illiquid names. A single trade might move a name's observable spread by 50bps. If no trade occurred on a given day, the mark from the previous trade (potentially weeks old) is used. Composite consensus spreads from prime broker runs add noise. The practical result: proxy CVA moves are partly real and partly data quality.
+
+### Governance Requirements
+
+Model validation groups require:
+- Written documentation of the proxy hierarchy and the criteria for assigning counterparties to each level
+- Regular backtesting: how well did the proxy predict subsequent observable spread moves on names that later became liquid?
+- Override procedures for cases where the systematic proxy produces a clearly wrong result (e.g., a state-owned entity assigned a corporate sector proxy)
+- Annual review of the risk premium calibration in Level 5
+
+In practice, the proxy framework is one of the largest sources of model risk reserve — because the uncertainty in proxy curves can easily be ±50% of the CVA on proxy-heavy books.
+
+---
+
+## 20. Active XVA Portfolio Management
+
+The XVA desk is not only a risk manager and pricer. It is an active portfolio manager. The best-run XVA desks generate meaningful P&L from deliberate portfolio actions — not just from bid-ask capture and carry.
+
+### Compression as a Revenue Strategy
+
+Portfolio compression (TriOptima, Quantile, DTCC) tears up offsetting trades and replaces them with fewer trades carrying identical net risk. This is not merely a cost reduction exercise — it is a direct source of XVA reserve release.
+
+**The mechanics**: All participants submit their portfolios to the compression service. An optimisation algorithm identifies sets of mutually offsetting trades across multiple counterparties that can be replaced with a smaller number of residual trades. A participant with 1,000 IRS trades across 200 counterparties might compress to 600 trades across 150 counterparties with zero change in net DV01.
+
+**XVA impact of one compression cycle**:
+- CVA reserve: typically falls 10–25% as gross exposure per counterparty falls and netting sets consolidate
+- MVA: often the largest single lever — lower gross sensitivity reduces SIMM IM, which compounds over the remaining trade tenor
+- KVA: lower SA-CCR AddOn (fewer trades, lower gross notional) reduces RWA
+- Operational: fewer settlement instructions, fewer confirmation disputes
+
+**The competitive angle**: Dealers that participate consistently in compression rounds run lower XVA cost bases and can offer tighter all-in prices on vanilla flow. Dealers that don't compress slowly lose market share. Compression participation is now effectively table stakes for competitive rates and credit derivatives dealing.
+
+**The catch**: Compression requires counterparty consent. A client holding a legacy CSA (high threshold, non-cash collateral) that benefits their funding may refuse compression if the replacement trades would be booked under 2016 VM CSA terms. The XVA saving is real but only realisable with client cooperation.
+
+### Novation and Trade Transfer
+
+Novation — transferring a trade from one counterparty to another — is used when a client restructures, a counterparty's credit deteriorates, or a better netting opportunity exists.
+
+**XVA-motivated novation**: If counterparty A has deteriorating credit (widening CDS spread, rising CVA), and the same exposure can be novated to counterparty B (parent entity, better credit), the CVA reserve falls immediately. The XVA desk identifies these opportunities systematically — running a daily screen of CVA-by-counterparty against credit outlook.
+
+**Intermediation through compression**: On a multilateral basis, the XVA desk can propose restructuring the counterparty mix for existing trades. For example, consolidating all a client's IR hedges from three different legal entities into one achieves the netting benefit without requiring novation.
+
+### CSA Renegotiation as a P&L Event
+
+When a counterparty agrees to tighten their CSA — reduce threshold, switch to daily margining, eliminate non-cash collateral — the CVA reserve falls. This reserve release is a direct P&L credit on the XVA desk.
+
+**The negotiation incentive**: The XVA desk can quantify the CVA saving precisely (it is the difference in CVA before and after the CSA change). Offering the client a fraction of that saving as a price improvement on a new trade creates a positive-sum deal: the client gets better economics, the bank releases CVA reserve. A £500k CVA saving shared 50/50 gives the client £250k of price improvement and the desk £250k of P&L.
+
+**Tracking the pipeline**: A well-run XVA desk maintains a pipeline of potential CSA renegotiations ranked by expected CVA release. This pipeline is reviewed quarterly with the coverage team. Counterparties near threshold where even a small tightening has large CVA impact (non-linear EE) are prioritised.
+
+### Wrong-Way Risk: The Practical Implementation
+
+The document's section on WWR describes the theory. The practice is more compromised.
+
+Almost no bank models WWR explicitly in Monte Carlo for the full book — the computational cost of correlating credit spread processes with market risk factors across 5,000 counterparties is prohibitive. What desks actually do:
+
+**Stressed CVA scenarios**: Run CVA under stress scenarios where each counterparty's spread is stressed conditional on a specific market event. An EM FX counterparty gets a 3-sigma spread shock alongside a 3-sigma currency depreciation. Stressed CVA minus base CVA is the WWR reserve for that name. This is computed annually or when the credit outlook changes.
+
+**Specific WWR charges**: For trades with structural WWR (equity puts on the counterparty's own stock, CDS protection referencing the counterparty), apply a bespoke multiplier — typically 2–5× base CVA, determined by the trade review committee. These are flagged at inception, not discovered in batch.
+
+**The 2020 COVID case study**: Energy company CVA in early 2020 had significant unmodelled WWR. Oil price crash → commodity derivative exposure increased (EE rose) → energy company credit spreads widened (PD rose) → correlation between the two was positive and large. Banks with explicit WWR reserves held adequate capital. Banks using alpha = 1.4× as their only WWR buffer were undercapitalised on these names. The correlation between oil prices and energy sector credit was well-documented pre-2020; most models assumed it was immaterial at the portfolio level.
 
 ---
 
