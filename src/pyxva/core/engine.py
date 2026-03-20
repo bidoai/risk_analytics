@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy.stats import qmc
@@ -38,6 +39,7 @@ class MonteCarloEngine:
         seed: int | None = None,
         quasi_random: bool = False,
         antithetic: bool = False,
+        parallel_models: bool = False,
     ) -> None:
         if antithetic and n_paths % 2 != 0:
             raise ValueError(
@@ -47,6 +49,7 @@ class MonteCarloEngine:
         self.seed = seed
         self.quasi_random = quasi_random
         self.antithetic = antithetic
+        self.parallel_models = parallel_models
 
     def run(
         self,
@@ -95,16 +98,35 @@ class MonteCarloEngine:
             draws = draws @ L.T
             logger.debug("Cholesky correlation applied: corr_matrix shape=%s", corr.shape)
 
-        # --- Slice draws per model and simulate ---
-        results: dict[str, SimulationResult] = {}
+        # --- Slice draws per model ---
+        slices: list[tuple[StochasticModel, np.ndarray]] = []
         offset = 0
         for model in models:
             nf = model.n_factors
-            model_draws = draws[:, :, offset : offset + nf]
+            slices.append((model, draws[:, :, offset : offset + nf]))
             logger.debug("Simulating %s (factors=%d, draw_slice=[%d:%d])", model.name, nf, offset, offset + nf)
-            results[model.name] = model.simulate(time_grid, self.n_paths, model_draws)
-            results[model.name].interpolation_space = model.interpolation_space
             offset += nf
+
+        # --- Simulate: parallel (threads) or serial ---
+        # Each model is independent after draw slicing.  NumPy and Numba both
+        # release the GIL, so ThreadPoolExecutor achieves real concurrency with
+        # no serialization cost (thread-shared memory, no pickling).
+        results: dict[str, SimulationResult] = {}
+
+        def _simulate(pair: tuple[StochasticModel, np.ndarray]) -> tuple[str, SimulationResult]:
+            model, model_draws = pair
+            result = model.simulate(time_grid, self.n_paths, model_draws)
+            result.interpolation_space = model.interpolation_space
+            return model.name, result
+
+        if self.parallel_models and len(slices) > 1:
+            with ThreadPoolExecutor(max_workers=len(slices)) as pool:
+                for name, result in pool.map(_simulate, slices):
+                    results[name] = result
+        else:
+            for pair in slices:
+                name, result = _simulate(pair)
+                results[name] = result
 
         logger.info("MonteCarloEngine.run complete: %d models simulated", len(results))
         return results
