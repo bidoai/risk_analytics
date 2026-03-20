@@ -47,6 +47,31 @@ def _marginal_pd(
     return float(np.exp(-hazard * t_prev) - np.exp(-hazard * t))
 
 
+def _marginal_pd_vec(
+    hazard: "float | HazardCurve",
+    time_grid: np.ndarray,
+) -> np.ndarray:
+    """Vectorized marginal default probabilities for every bucket in time_grid.
+
+    Returns Q(t_{i-1}) − Q(t_i) for i = 1 … T−1 in a single call, avoiding a
+    Python loop over T−1 scalar ``_marginal_pd`` queries.
+
+    Parameters
+    ----------
+    hazard : float | HazardCurve
+    time_grid : np.ndarray, shape (T,)
+
+    Returns
+    -------
+    np.ndarray, shape (T-1,)
+    """
+    if isinstance(hazard, HazardCurve):
+        q = hazard.survival_probability_vec(time_grid)
+        return q[:-1] - q[1:]
+    # Flat scalar hazard rate
+    return np.exp(-hazard * time_grid[:-1]) - np.exp(-hazard * time_grid[1:])
+
+
 class BilateralExposureCalculator(ExposureCalculator):
     """Extends ExposureCalculator with bilateral and regulatory metrics.
 
@@ -359,36 +384,28 @@ class BilateralExposureCalculator(ExposureCalculator):
             'mva'   : np.ndarray, shape (T-1,) — MVA per bucket (zeros if no im_profile/funding)
             'total' : np.ndarray, shape (T-1,) — CVA - DVA + FVA + MVA per bucket
         """
-        T = len(time_grid)
-        n_buckets = T - 1
+        n_buckets = len(time_grid) - 1
 
         ee = self.expected_exposure(mtm)
         ene_abs = np.abs(self.ene(mtm))
 
-        cva_buckets = np.empty(n_buckets)
+        # Vectorized marginal PDs for all buckets in one pass — avoids T-1 Python iterations
+        bucket_mids = 0.5 * (time_grid[:-1] + time_grid[1:])
+        pd = _marginal_pd_vec(hazard, time_grid)
+        cva_buckets = lgd * ee[1:] * pd
+
         dva_buckets = np.zeros(n_buckets)
+        if own_hazard is not None:
+            pd_own = _marginal_pd_vec(own_hazard, time_grid)
+            dva_buckets = lgd * ene_abs[1:] * pd_own
+
         fva_buckets = np.zeros(n_buckets)
         mva_buckets = np.zeros(n_buckets)
-        bucket_mids = np.empty(n_buckets)
-
-        for i in range(n_buckets):
-            t0 = float(time_grid[i])
-            t1 = float(time_grid[i + 1])
-            bucket_mids[i] = 0.5 * (t0 + t1)
-
-            pd = _marginal_pd(hazard, t0, t1)
-            cva_buckets[i] = lgd * ee[i + 1] * pd
-
-            if own_hazard is not None:
-                pd_own = _marginal_pd(own_hazard, t0, t1)
-                dva_buckets[i] = lgd * ene_abs[i + 1] * pd_own
-
-            if funding is not None:
-                dt = t1 - t0
-                fund_pd = _marginal_pd(funding, t0, t1)
-                fva_buckets[i] = (ee[i + 1] - ene_abs[i + 1]) * fund_pd
-                if im_profile is not None:
-                    mva_buckets[i] = im_profile[i + 1] * fund_pd
+        if funding is not None:
+            fund_pd = _marginal_pd_vec(funding, time_grid)
+            fva_buckets = (ee[1:] - ene_abs[1:]) * fund_pd
+            if im_profile is not None:
+                mva_buckets = im_profile[1:] * fund_pd
 
         total_buckets = cva_buckets - dva_buckets + fva_buckets + mva_buckets
 

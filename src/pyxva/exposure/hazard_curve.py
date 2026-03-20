@@ -225,6 +225,34 @@ class HazardCurve:
             return 0.0
         return float(self.survival_probability(t_prev) - self.survival_probability(t))
 
+    def survival_probability_vec(self, t_array: np.ndarray) -> np.ndarray:
+        """Vectorized survival probabilities for an array of times.
+
+        Equivalent to ``[survival_probability(t) for t in t_array]`` but performs
+        a single O(N_buckets) pass over the piecewise-constant segments rather than
+        O(len(t_array) × N_buckets) scalar calls.  Intended for bulk time-grid queries.
+
+        Parameters
+        ----------
+        t_array : np.ndarray, shape (T,)
+            Query times in years, must be non-decreasing.
+
+        Returns
+        -------
+        np.ndarray, shape (T,)
+        """
+        t_array = np.asarray(t_array, dtype=float)
+        cumulative = np.zeros(len(t_array))
+        t_prev = 0.0
+        for tenor, lam in zip(self._tenors, self._hazard_rates):
+            dt = np.clip(np.minimum(tenor, t_array) - t_prev, 0.0, None)
+            cumulative += lam * dt
+            t_prev = tenor
+        # Extend flat beyond the last tenor bucket
+        if len(t_array) > 0 and t_array[-1] > self._tenors[-1]:
+            cumulative += self._hazard_rates[-1] * np.maximum(t_array - self._tenors[-1], 0.0)
+        return np.exp(-cumulative)
+
     # ------------------------------------------------------------------
     # Convenience properties
     # ------------------------------------------------------------------
