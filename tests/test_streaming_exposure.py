@@ -9,6 +9,8 @@ from pyxva.exposure.csa import CSATerms, MarginRegime, IMModel
 from pyxva.exposure.streaming.vm_stepper import REGVMStepper
 from pyxva.exposure.streaming.engine import StreamingExposureEngine
 from pyxva.pricing.rates.swap import InterestRateSwap
+from pyxva.pricing.equity.vanilla_option import EuropeanOption
+from pyxva.portfolio.trade import Trade
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +322,130 @@ def test_streaming_batch_ee_parity():
         ee_batch, ee_stream, atol=1e-4,
         err_msg="Streaming and batch EE profiles diverge by more than 1bp",
     )
+
+
+# ---------------------------------------------------------------------------
+# Multi-model netting sets
+# ---------------------------------------------------------------------------
+
+def _equity_result(
+    n_paths: int = 100,
+    n_steps: int = 25,
+    s0: float = 100.0,
+    sigma: float = 0.20,
+) -> SimulationResult:
+    """Synthetic GBM-like equity SimulationResult."""
+    time_grid = np.linspace(0, 5.0, n_steps)
+    rng = np.random.default_rng(77)
+    dt = np.diff(time_grid, prepend=0.0)
+    log_s = np.log(s0) + np.cumsum(
+        (0.04 - 0.5 * sigma ** 2) * dt[None, :]
+        + sigma * np.sqrt(dt)[None, :] * rng.standard_normal((n_paths, n_steps)),
+        axis=1,
+    )
+    paths = np.exp(log_s)[:, :, None]
+    return SimulationResult(
+        time_grid=time_grid,
+        paths=paths,
+        model_name="GBM",
+        factor_names=["S"],
+    )
+
+
+class TestStreamingMultiModel:
+    """Multi-model netting sets: Trade objects + dict[str, SimulationResult]."""
+
+    def test_single_result_dict_matches_single_result(self):
+        """Passing {model_name: result} and bare result must produce identical output."""
+        rate_res = _rate_result(n_paths=50, n_steps=20)
+        swap = InterestRateSwap(fixed_rate=0.04, maturity=5.0, notional=1e6)
+        csa = _csa_zero_th()
+
+        # Legacy: tuple + bare result
+        engine_legacy = StreamingExposureEngine([("swap1", swap)], csa)
+        out_legacy = engine_legacy.run(rate_res)
+
+        # New: Trade + dict
+        t = Trade(id="swap1", pricer=swap, model_name="HW")
+        engine_new = StreamingExposureEngine([t], csa)
+        out_new = engine_new.run({"HW": rate_res})
+
+        np.testing.assert_allclose(out_legacy.ee_profile, out_new.ee_profile, atol=1e-12)
+
+    def test_two_models_different_results(self):
+        """Netting set with IR swap + equity option should run without error."""
+        rate_res = _rate_result(n_paths=100, n_steps=20)
+        eq_res = _equity_result(n_paths=100, n_steps=20)
+
+        swap = InterestRateSwap(fixed_rate=0.04, maturity=5.0, notional=1e5)
+        option = EuropeanOption(strike=100.0, expiry=2.0, sigma=0.20, risk_free_rate=0.04)
+
+        t_swap = Trade(id="swap1", pricer=swap, model_name="HW")
+        t_opt = Trade(id="opt1", pricer=option, model_name="GBM")
+
+        csa = _csa_zero_th()
+        engine = StreamingExposureEngine([t_swap, t_opt], csa)
+        out = engine.run({"HW": rate_res, "GBM": eq_res})
+
+        assert out.ee_profile.shape == (20,)
+        assert np.all(out.ee_profile >= -1e-10)
+        assert out.peak_ee >= 0.0
+
+    def test_mismatched_time_grids_raises(self):
+        """Dict results with different time grids must raise ValueError."""
+        rate_res = _rate_result(n_paths=50, n_steps=20)
+        eq_res_diff = _equity_result(n_paths=50, n_steps=15)  # different n_steps
+
+        swap = InterestRateSwap(fixed_rate=0.04, maturity=5.0, notional=1e5)
+        option = EuropeanOption(strike=100.0, expiry=2.0, sigma=0.20, risk_free_rate=0.04)
+        t_swap = Trade(id="s", pricer=swap, model_name="HW")
+        t_opt = Trade(id="o", pricer=option, model_name="GBM")
+
+        engine = StreamingExposureEngine([t_swap, t_opt], _csa_zero_th())
+        with pytest.raises(ValueError, match="same time grid"):
+            engine.run({"HW": rate_res, "GBM": eq_res_diff})
+
+
+# ---------------------------------------------------------------------------
+# Proper MPOR: CSB ring buffer
+# ---------------------------------------------------------------------------
+
+class TestProperMPOR:
+    def test_mpor_profile_non_negative(self):
+        """ee_mpor_profile must be non-negative."""
+        result = _rate_result(n_paths=200, n_steps=30)
+        swap = InterestRateSwap(fixed_rate=0.04, maturity=5.0, notional=1e6)
+        engine = StreamingExposureEngine([("s", swap)], _csa_zero_th())
+        out = engine.run(result, mpor_steps=3)
+        assert np.all(out.ee_mpor_profile >= -1e-12)
+
+    def test_mpor_zero_for_first_steps(self):
+        """For i < mpor_steps the ee_mpor should be 0 (no history yet)."""
+        result = _rate_result(n_paths=100, n_steps=20)
+        swap = InterestRateSwap(fixed_rate=0.04, maturity=5.0, notional=1e6)
+        mpor_steps = 5
+        engine = StreamingExposureEngine([("s", swap)], _csa_zero_th())
+        out = engine.run(result, mpor_steps=mpor_steps)
+        # First mpor_steps entries should be zero (no ring-buffer history)
+        np.testing.assert_allclose(
+            out.ee_mpor_profile[:mpor_steps], 0.0, atol=1e-12,
+            err_msg="ee_mpor should be 0 for the first mpor_steps steps (no CSB history)"
+        )
+
+    def test_mpor_geq_ee_for_well_collateralised_netting_set(self):
+        """Under zero-threshold CSA, ee_mpor(t) >= ee_profile(t) for t >= mpor_steps.
+
+        After mpor periods the lagged CSB is lower than the current CSB
+        (collateral hasn't been refreshed for mpor steps), so the MPOR exposure
+        should weakly exceed the standard post-margin exposure.
+        """
+        result = _rate_result(n_paths=500, n_steps=40, r0=0.03, r_end=0.06)
+        swap = InterestRateSwap(fixed_rate=0.03, maturity=5.0, notional=1e6)
+        mpor_steps = 3
+        engine = StreamingExposureEngine([("s", swap)], _csa_zero_th())
+        out = engine.run(result, mpor_steps=mpor_steps)
+        # After mpor_steps, ee_mpor >= ee_profile (up to floating point)
+        np.testing.assert_array_less(
+            out.ee_profile[mpor_steps:] - 1e-4,
+            out.ee_mpor_profile[mpor_steps:],
+        )
